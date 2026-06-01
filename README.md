@@ -137,8 +137,14 @@ python -m src.data.process
 # 指定数据文件
 python -m src.data.process --data data/imu_test.csv
 
-# 带标签（训练用，需要先创建 data/labels.json）
-python -m src.data.process --data data/imu_test.csv --label data/labels.json
+# 自动匹配同名 json 标签 (如 imu_test.csv → imu_test.json)
+python -m src.data.process --data data/imu_test.csv
+
+# 显式指定标签文件 (覆盖自动匹配)
+python -m src.data.process --data data/imu_test.csv --label data/other.json
+
+# 批量处理所有 csv 文件
+for f in data/*.csv; do python -m src.data.process --data "$f"; done
 ```
 
 输出:

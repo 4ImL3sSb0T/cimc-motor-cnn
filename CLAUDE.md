@@ -52,8 +52,14 @@ python -m src.data.process
 # 指定数据文件
 python -m src.data.process --data data/imu_test.csv
 
-# 带标签的数据处理
-python -m src.data.process --data data/imu_test.csv --label data/labels.json
+# 自动匹配同名 json 标签 (如 imu_test.csv → imu_test.json)
+python -m src.data.process --data data/imu_test.csv
+
+# 显式指定标签文件 (覆盖自动匹配)
+python -m src.data.process --data data/imu_test.csv --label data/other.json
+
+# 批量处理所有 csv 文件
+for f in data/*.csv; do python -m src.data.process --data "$f"; done
 
 # CNN 样本查看器 (查看频谱图 + 时间分布)
 python -m src.data.process --viewer --data data/imu_test.csv

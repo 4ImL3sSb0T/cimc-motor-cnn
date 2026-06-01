@@ -35,6 +35,20 @@ def resolve_data_path(data_path: str | None) -> Path | None:
     return found
 
 
+def find_matching_label(data_path: Path) -> dict | None:
+    """
+    根据数据文件路径自动查找同名 JSON 标签配置。
+    例如: data/imu_test.csv → data/imu_test.json
+    """
+    label_path = data_path.with_suffix(".json")
+    if label_path.exists():
+        with open(label_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        print(f"自动匹配标签: {label_path.name}")
+        return config
+    return None
+
+
 def run_pipeline(data_path: str | None = None, label_config: dict | None = None):
     """默认模式: 加载数据 → FFT → 生成 CNN 样本 → 保存 .npz"""
     data_path = resolve_data_path(data_path)
@@ -136,6 +150,7 @@ def main():
         # 解析 --label 参数
         label_config = None
         if "--label" in sys.argv:
+            # 显式指定标签文件
             idx = sys.argv.index("--label")
             if idx + 1 >= len(sys.argv):
                 print("错误: --label 需要指定 JSON 配置文件路径")
@@ -147,6 +162,11 @@ def main():
             with open(label_path, "r", encoding="utf-8") as f:
                 label_config = json.load(f)
             print(f"标签配置: {label_path}")
+        else:
+            # 自动匹配: 查找同名 json 文件
+            resolved = resolve_data_path(data_path)
+            if resolved:
+                label_config = find_matching_label(resolved)
 
         run_pipeline(data_path=data_path, label_config=label_config)
 
