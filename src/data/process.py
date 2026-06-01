@@ -17,7 +17,7 @@ from pathlib import Path
 from src.config import DC_OFFSET_SAMPLES, DATA_DIR, OUTPUT_DIR
 from src.data.data_loader import load_data, find_data_file, remove_dc_offset
 from src.data.fft_processor import process_3axis
-from src.data.sample_generator import generate_samples, generate_labels, save_samples
+from src.data.sample_generator import generate_samples, generate_labels, filter_labeled, save_samples
 from src.visualizer import plot_fft_analysis, CNNSampleViewer
 
 
@@ -64,6 +64,7 @@ def run_pipeline(data_path: str | None = None, label_config: dict | None = None)
     labels = None
     if label_config is not None:
         labels = generate_labels(len(samples), label_config)
+        samples, labels = filter_labeled(samples, labels)
 
     # 6. 保存
     OUTPUT_DIR.mkdir(exist_ok=True)

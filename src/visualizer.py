@@ -11,18 +11,41 @@ from src.config import (
     SP_FREQ_RES, SP_FREQ_BINS, CNN_SAMPLE_FRAMES,
 )
 
-# 中文字体
+# 中文字体 — WSL2 下 matplotlib 扫描不到 Windows 字体，手动查找
 _CN_FONT = None
+
+# 1. 先从 matplotlib fontManager 中找
 for _name in ["Microsoft YaHei", "SimHei", "NSimSun"]:
     _matches = [f for f in fm.fontManager.ttflist if f.name == _name]
     if _matches:
         _CN_FONT = fm.FontProperties(fname=_matches[0].fname)
         break
 
+# 2. 找不到则扫描 WSL2 挂载的 Windows 字体目录
+if _CN_FONT is None:
+    _WIN_FONT_DIR = Path("/mnt/c/Windows/Fonts")
+    _CN_FONT_MAP = {
+        "Microsoft YaHei": ["msyh.ttc", "msyhbd.ttc", "msyhl.ttc"],
+        "SimHei":          ["simhei.ttf"],
+        "NSimSun":         ["simsun.ttc", "simsunb.ttf"],
+    }
+    for _name, _files in _CN_FONT_MAP.items():
+        for _fname in _files:
+            _fpath = _WIN_FONT_DIR / _fname
+            if _fpath.exists():
+                fm.fontManager.addfont(str(_fpath))
+                _CN_FONT = fm.FontProperties(fname=str(_fpath))
+                print(f"已加载中文字体: {_name} ({_fpath})")
+                break
+        if _CN_FONT is not None:
+            break
+
+# 3. 兜底
 if _CN_FONT is None:
     matplotlib.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
     matplotlib.rcParams["axes.unicode_minus"] = False
     _CN_FONT = fm.FontProperties()
+    print("警告: 未找到中文字体，中文可能显示为方块")
 
 
 class CNNSampleViewer:

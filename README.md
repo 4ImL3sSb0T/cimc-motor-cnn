@@ -300,7 +300,8 @@ Z 轴频谱: (346, 512)  ─┘
 python -m src.data.process                              # 自动查找 data/ 下第一个文件
 python -m src.data.process --data data/imu_test.csv     # 指定数据文件
 python -m src.data.process --label data/labels.json     # 带标签生成
-python -m src.data.process --data data/a.csv --label data/labels.json  # 指定文件+标签
+python -m src.data.process --data data/a.csv --label data/labels.json  # 指定文件
+# +标签
 python -m src.data.process --viewer                     # 交互式查看器 (需 GUI)
 python -m src.data.process --static                     # 静态 FFT 分析图
 ```

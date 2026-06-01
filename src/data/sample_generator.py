@@ -72,7 +72,6 @@ def generate_labels(
         n_samples: CNN 样本总数
         label_config: 从 JSON 解析的配置字典，格式:
             {
-              "default_class": "other",       # 可选，默认 "other"
               "labels": [
                 {"start": 0.0, "end": 5.0, "class": "idle"},
                 ...
@@ -80,11 +79,8 @@ def generate_labels(
             }
 
     Returns:
-        labels: shape=(N,), int32 — 每个样本对应的类别索引
+        labels: shape=(N,), int32 — 每个样本对应的类别索引，未匹配的为 -1
     """
-    default_class = label_config.get("default_class", "other")
-    default_idx = CLASS_NAMES.index(default_class) if default_class in CLASS_NAMES else len(CLASS_NAMES) - 1
-
     segments = label_config.get("labels", [])
     # 预处理: 将 class 名转为索引
     seg_idx = []
@@ -99,7 +95,7 @@ def generate_labels(
             "cls": CLASS_NAMES.index(cls_name),
         })
 
-    labels = np.full(n_samples, default_idx, dtype=np.int32)
+    labels = np.full(n_samples, -1, dtype=np.int32)
     matched = 0
 
     for i in range(n_samples):
@@ -111,13 +107,27 @@ def generate_labels(
                 matched += 1
                 break
 
-    print(f"标签生成: {n_samples} 个样本, 匹配 {matched}, 默认 {n_samples - matched}")
+    print(f"标签生成: {n_samples} 个样本, 匹配 {matched}, 无标签 {n_samples - matched}")
     # 统计各类别数量
     for cls_idx, cls_name in enumerate(CLASS_NAMES):
         count = (labels == cls_idx).sum()
         if count > 0:
             print(f"  {cls_name}: {count}")
     return labels
+
+
+def filter_labeled(
+    samples: np.ndarray,
+    labels: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """过滤掉没有标签 (label=-1) 的样本"""
+    mask = labels >= 0
+    n_before = len(labels)
+    n_after = mask.sum()
+    n_dropped = n_before - n_after
+    if n_dropped > 0:
+        print(f"过滤: 丢弃 {n_dropped} 个无标签样本, 保留 {n_after}")
+    return samples[mask], labels[mask]
 
 
 def save_samples(

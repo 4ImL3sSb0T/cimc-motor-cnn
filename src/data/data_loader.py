@@ -40,6 +40,18 @@ def load_xlsx(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return ax, ay, az
 
 
+def _fix_nan(arr: np.ndarray, name: str) -> np.ndarray:
+    """用线性插值修复数组中的 NaN 值"""
+    nan_count = np.isnan(arr).sum()
+    if nan_count == 0:
+        return arr
+    print(f"  {name}: 发现 {nan_count} 个 NaN，线性插值修复")
+    idx = np.arange(len(arr))
+    good = ~np.isnan(arr)
+    arr = np.interp(idx, idx[good], arr[good]).astype(np.float32)
+    return arr
+
+
 def load_csv(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     读取 TCP receiver 生成的 CSV 文件中的 3 轴加速度数据。
@@ -54,9 +66,10 @@ def load_csv(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
             ax_list.append(float(row[2]))
             ay_list.append(float(row[3]))
             az_list.append(float(row[4]))
-    return (np.array(ax_list, dtype=np.float32),
-            np.array(ay_list, dtype=np.float32),
-            np.array(az_list, dtype=np.float32))
+    ax = _fix_nan(np.array(ax_list, dtype=np.float32), "X")
+    ay = _fix_nan(np.array(ay_list, dtype=np.float32), "Y")
+    az = _fix_nan(np.array(az_list, dtype=np.float32), "Z")
+    return ax, ay, az
 
 
 def load_data(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
