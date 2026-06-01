@@ -6,7 +6,8 @@
       "Bash(/home/ws/miniconda3/envs/tf_gpu/bin/python *)",
       "Bash(python3 *)",
       "Bash(conda run *)",
-      "mcp__tavily__tavily_search"
+      "mcp__tavily__tavily_search",
+      "mcp__tavily__tavily_extract"
     ]
   }
 }

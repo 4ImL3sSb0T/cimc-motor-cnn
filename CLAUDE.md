@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 IMU 加速度数据的 FFT 频谱分析 + CNN 神经网络分类项目，用于电机振动检测。
-数据流程: xlsx/csv 原始数据 → 去直流偏移 → 滑动窗口 FFT → 频谱图 → CNN 分类 → TFLite 导出 (ESP32 部署)
+数据流程: xlsx/csv 原始数据 → 去直流偏移 → 滑动窗口 FFT → 频谱图 → CNN 分类 → ONNX 导出
 
 ## Project Structure
 
@@ -21,7 +21,7 @@ src/
 │   ├── model.py               # CNN 模型定义 (11,012 参数)
 │   ├── dataset.py             # 数据加载 + 归一化 + 增强
 │   ├── train.py               # 训练脚本
-│   └── export.py              # TFLite/ONNX 导出
+│   └── export.py              # ONNX 导出
 └── visualizer.py              # FFT 分析图 + CNN 样本查看器
 tcp_receiver.py                # ESP32 IMU 数据 TCP 接收器
 data/                          # 原始数据 (xlsx/csv) + 标签配置 (json)
@@ -74,7 +74,7 @@ python -m src.cnn.train
 python -m src.cnn.predict --data data/imu_new.csv
 python -m src.cnn.predict --data data/imu_new.csv --output result.csv
 
-# 导出 TFLite / ONNX 模型
+# 导出 ONNX 模型 (TFLite 因 TF 2.16 bug 无法使用)
 python -m src.cnn.export
 
 # ESP32 数据采集
@@ -104,9 +104,8 @@ python tcp_receiver.py --duration 10 -o data/imu_test.csv
         → 保存 models/best.keras + meta.json
 
 导出: models/best.keras
-        → model_float32.tflite  不量化, PC 测试
-        → model_int8.tflite     全量化, ESP32 部署 (~11KB)
-        → model.onnx            通用格式
+        → model.onnx            ONNX 通用格式 (45.9KB)
+        注: TFLite 导出因 TF 2.16.x MLIR bug 不可用 (tensorflow#63987)
 ```
 
 ## Label Config Format
