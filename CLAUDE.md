@@ -46,17 +46,20 @@ Key packages:
 ```bash
 conda activate tf_gpu
 
-# 数据处理 (xlsx/csv → FFT → .npz 样本)
+# 数据处理 (自动查找 data/ 下第一个文件)
 python -m src.data.process
 
-# 带标签的数据处理 (需要先创建 data/labels.json)
-python -m src.data.process --label data/labels.json
+# 指定数据文件
+python -m src.data.process --data data/imu_test.csv
+
+# 带标签的数据处理
+python -m src.data.process --data data/imu_test.csv --label data/labels.json
 
 # CNN 样本查看器 (查看频谱图 + 时间分布)
-python -m src.data.process --viewer
+python -m src.data.process --viewer --data data/imu_test.csv
 
 # 静态 FFT 分析图
-python -m src.data.process --static
+python -m src.data.process --static --data data/imu_test.csv
 
 # 训练 CNN 模型
 python -m src.cnn.train

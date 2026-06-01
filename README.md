@@ -130,11 +130,14 @@ timestamp_us,datetime,acc_x,acc_y,acc_z
 ### 2. 数据处理 — 生成 CNN 样本
 
 ```bash
-# 无标签（演示用）
+# 无标签（演示用，自动查找 data/ 下第一个文件）
 python -m src.data.process
 
+# 指定数据文件
+python -m src.data.process --data data/imu_test.csv
+
 # 带标签（训练用，需要先创建 data/labels.json）
-python -m src.data.process --label data/labels.json
+python -m src.data.process --data data/imu_test.csv --label data/labels.json
 ```
 
 输出:
@@ -294,8 +297,10 @@ Z 轴频谱: (346, 512)  ─┘
 ### `src/data/process.py` — 数据处理入口
 
 ```bash
-python -m src.data.process                              # 默认: 生成 .npz 样本
+python -m src.data.process                              # 自动查找 data/ 下第一个文件
+python -m src.data.process --data data/imu_test.csv     # 指定数据文件
 python -m src.data.process --label data/labels.json     # 带标签生成
+python -m src.data.process --data data/a.csv --label data/labels.json  # 指定文件+标签
 python -m src.data.process --viewer                     # 交互式查看器 (需 GUI)
 python -m src.data.process --static                     # 静态 FFT 分析图
 ```

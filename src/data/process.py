@@ -2,8 +2,10 @@
 IMU 加速度数据 FFT 频谱分析 + CNN 样本生成
 
 用法:
-  python -m src.data.process                              # 生成 CNN 样本并保存 .npz
+  python -m src.data.process                              # 自动查找 data/ 下第一个文件
+  python -m src.data.process --data data/imu_test.csv     # 指定数据文件
   python -m src.data.process --label data/labels.json     # 带标签生成
+  python -m src.data.process --data data/a.csv --label data/labels.json
   python -m src.data.process --viewer                     # 交互式 CNN 样本查看器
   python -m src.data.process --static                     # 静态一次性 FFT 分析图
 """
@@ -19,11 +21,24 @@ from src.data.sample_generator import generate_samples, generate_labels, save_sa
 from src.visualizer import plot_fft_analysis, CNNSampleViewer
 
 
-def run_pipeline(label_config: dict | None = None):
-    """默认模式: 加载数据 → FFT → 生成 CNN 样本 → 保存 .npz"""
-    data_path = find_data_file(DATA_DIR)
-    if not data_path:
+def resolve_data_path(data_path: str | None) -> Path | None:
+    """解析数据文件路径: 指定路径直接用，否则自动查找"""
+    if data_path:
+        p = Path(data_path)
+        if not p.exists():
+            print(f"错误: 数据文件不存在: {p}")
+            return None
+        return p
+    found = find_data_file(DATA_DIR)
+    if not found:
         print(f"{DATA_DIR}/ 目录下没有找到 xlsx/csv 文件")
+    return found
+
+
+def run_pipeline(data_path: str | None = None, label_config: dict | None = None):
+    """默认模式: 加载数据 → FFT → 生成 CNN 样本 → 保存 .npz"""
+    data_path = resolve_data_path(data_path)
+    if not data_path:
         return
 
     # 1. 加载原始数据
@@ -58,11 +73,10 @@ def run_pipeline(label_config: dict | None = None):
     return samples
 
 
-def run_viewer():
+def run_viewer(data_path: str | None = None):
     """交互式 CNN 样本查看器"""
-    data_path = find_data_file(DATA_DIR)
+    data_path = resolve_data_path(data_path)
     if not data_path:
-        print(f"{DATA_DIR}/ 目录下没有找到 xlsx/csv 文件")
         return
 
     print(f"读取: {data_path.name}")
@@ -82,11 +96,10 @@ def run_viewer():
     print(f"值范围: [{sample.min():.4f}, {sample.max():.4f}]")
 
 
-def run_static():
+def run_static(data_path: str | None = None):
     """静态 FFT 分析图"""
-    data_path = find_data_file(DATA_DIR)
+    data_path = resolve_data_path(data_path)
     if not data_path:
-        print(f"{DATA_DIR}/ 目录下没有找到 xlsx/csv 文件")
         return
 
     print(f"读取: {data_path.name}")
@@ -100,15 +113,24 @@ def run_static():
     raw_signals = {"x": ax, "y": ay, "z": az}
     plot_fft_analysis(
         result, raw_signals=raw_signals,
-        save_path=OUTPUT_DIR / "fft_analysis.png",
+        save_path=OUTPUT_DIR / f"{data_path.stem}_fft_analysis.png",
     )
 
 
 def main():
+    # 解析公共参数
+    data_path = None
+    if "--data" in sys.argv:
+        idx = sys.argv.index("--data")
+        if idx + 1 >= len(sys.argv):
+            print("错误: --data 需要指定数据文件路径")
+            sys.exit(1)
+        data_path = sys.argv[idx + 1]
+
     if "--viewer" in sys.argv:
-        run_viewer()
+        run_viewer(data_path=data_path)
     elif "--static" in sys.argv:
-        run_static()
+        run_static(data_path=data_path)
     else:
         # 解析 --label 参数
         label_config = None
@@ -125,7 +147,7 @@ def main():
                 label_config = json.load(f)
             print(f"标签配置: {label_path}")
 
-        run_pipeline(label_config=label_config)
+        run_pipeline(data_path=data_path, label_config=label_config)
 
 
 if __name__ == "__main__":
