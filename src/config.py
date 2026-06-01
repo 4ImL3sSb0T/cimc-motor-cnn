@@ -88,7 +88,7 @@ MODEL_DIR = PROJECT_ROOT / "models"
 # 定义模型要识别的类别
 # !!! 你需要根据实际数据修改这个列表 !!!
 # 例如: 如果你只有 "正常" 和 "异常" 两类，改成 ["normal", "abnormal"]
-CLASS_NAMES = ["idle", "vibration", "impact", "other"]
+CLASS_NAMES = ["idle", "normal", "loose", "imbalance"]
 # 类别数量 (自动计算)
 NUM_CLASSES = len(CLASS_NAMES)
 

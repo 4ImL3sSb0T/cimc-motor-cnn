@@ -8,8 +8,8 @@ CNN (Convolutional Neural Network，卷积神经网络) 是一种专门用来识
 === 模型做了什么? ===
 输入一张频谱图 → 经过层层卷积提取特征 → 最终输出每个类别的概率
 例如: 输入一张振动频谱图，输出 [0.05, 0.90, 0.03, 0.02]
-      表示: 5%概率是idle, 90%概率是vibration, 3%是impact, 2%是other
-      → 所以判断为 "vibration"
+      表示: 5%概率是idle, 90%概率是normal, 3%是loose, 2%是imbalance
+      → 所以判断为 "normal"
 
 === 输入输出 ===
 输入: (batch, 16, 512, 3)  — batch张图片, 每张16帧高×512频率宽×3通道(X/Y/Z)
@@ -40,7 +40,7 @@ def build_model(
             - frames=16: 时间维度，16个时间帧
             - freq_bins=512: 频率维度，512个频率bin
             - channels=3: X/Y/Z 三轴加速度
-        num_classes: 分类类别数，比如4类(idle/vibration/impact/other)
+        num_classes: 分类类别数，比如4类(idle/normal/loose/imbalance)
 
     Returns:
         编译好的 Keras Model，可以直接用来训练或预测

@@ -149,8 +149,8 @@ FFT 参数: size=1024, hop=256, bins=512, df=6.51Hz
 生成样本: 332 个, shape=(332, 3, 16, 512), dtype=float32, range=[-78.1, 65.6]
 标签生成: 332 个样本, 匹配 332, 默认 0
   idle: 121
-  vibration: 130
-  impact: 81
+  normal: 130
+  loose: 81
 已保存: output/imu_test_samples.npz (27.9 MB)
 ```
 
@@ -219,7 +219,7 @@ CNN_SAMPLE_FRAMES = 16      # 每个样本的时间帧数
 CNN_INPUT_SHAPE = (3, 16, 512)  # (通道, 帧, 频率bin)
 
 # 训练
-CLASS_NAMES = ["idle", "vibration", "impact", "other"]  # ← 修改为实际类别
+CLASS_NAMES = ["idle", "normal", "loose", "imbalance"]  # ← 修改为实际类别
 BATCH_SIZE = 16
 EPOCHS = 100
 LEARNING_RATE = 1e-3
@@ -289,7 +289,7 @@ Z 轴频谱: (346, 512)  ─┘
 
 **npz 文件格式**:
 - `samples`: shape `(N, 3, 16, 512)`, float32 — CNN 输入
-- `labels` (可选): shape `(N,)`, int32 — 分类标签 (0=idle, 1=vibration, 2=impact, 3=other)
+- `labels` (可选): shape `(N,)`, int32 — 分类标签 (0=idle, 1=normal, 2=loose, 3=imbalance)
 
 ### `src/data/process.py` — 数据处理入口
 
@@ -363,8 +363,8 @@ python -m src.data.process --static                     # 静态 FFT 分析图
   "default_class": "other",
   "labels": [
     {"start": 0.0, "end": 5.0, "class": "idle"},
-    {"start": 5.0, "end": 10.0, "class": "vibration"},
-    {"start": 10.0, "end": 13.5, "class": "impact"}
+    {"start": 5.0, "end": 10.0, "class": "normal"},
+    {"start": 10.0, "end": 13.5, "class": "loose"}
   ]
 }
 ```
@@ -380,7 +380,7 @@ python -m src.data.process --static                     # 静态 FFT 分析图
 编辑 `src/config.py`:
 
 ```python
-CLASS_NAMES = ["idle", "vibration", "impact", "other"]
+CLASS_NAMES = ["idle", "normal", "loose", "imbalance"]
 NUM_CLASSES = len(CLASS_NAMES)
 ```
 
@@ -440,7 +440,7 @@ python -m src.cnn.export
     "mean": [8.60, 4.06, 2.20],
     "std": [18.95, 17.38, 17.35]
   },
-  "class_names": ["idle", "vibration", "impact", "other"],
+  "class_names": ["idle", "normal", "loose", "imbalance"],
   "input_shape": [16, 512, 3],
   "num_classes": 4
 }
@@ -466,7 +466,7 @@ ESP32 推理时需要:
 | 样本帧数 | 16 | 每个 CNN 输入的时间帧 |
 | CNN 输入 | (16, 512, 3) | frames × freq_bins × channels |
 | 模型参数 | 11,012 | 43 KB |
-| 分类类别 | 4 | idle/vibration/impact/other |
+| 分类类别 | 4 | idle/normal/loose/imbalance |
 
 ---
 

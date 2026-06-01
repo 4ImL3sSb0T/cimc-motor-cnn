@@ -164,7 +164,7 @@ def make_tf_dataset(
     ds = tf.data.Dataset.from_tensor_slices((samples, labels))
 
     # 打乱顺序: 每个 epoch (遍历完所有数据) 重新打乱一次
-    # 为什么打乱? 防止模型学到数据的顺序 (比如先学idle再学vibration)
+    # 为什么打乱? 防止模型学到数据的顺序 (比如先学idle再学normal)
     if shuffle:
         ds = ds.shuffle(
             buffer_size=len(samples),              # 打乱缓冲区大小
@@ -293,7 +293,7 @@ def train_val_split(
     (这就是过拟合)。验证集帮我们及时发现这个问题。
 
     === 分层抽样 ===
-    如果类别分布不均匀 (比如 idle 有 200 个，impact 只有 30 个)，
+    如果类别分布不均匀 (比如 idle 有 200 个，loose 只有 30 个)，
     简单随机抽样可能导致验证集里某个类别一个都没有。
     分层抽样保证每个类别都按比例分到训练集和验证集。
 

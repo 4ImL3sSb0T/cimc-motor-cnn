@@ -217,7 +217,7 @@ def train(npz_path: str, epochs: int = EPOCHS, batch_size: int = BATCH_SIZE):
     #   - num_classes: 检查类别数是否正确
     meta = {
         "norm_stats": norm_stats,          # {"mean": [...], "std": [...]}
-        "class_names": CLASS_NAMES,        # ["idle", "vibration", "impact", "other"]
+        "class_names": CLASS_NAMES,        # ["idle", "normal", "loose", "imbalance"]
         "input_shape": list(model.input_shape[1:]),  # [16, 512, 3]
         "num_classes": NUM_CLASSES,        # 4
     }

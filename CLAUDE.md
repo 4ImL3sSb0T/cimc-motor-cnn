@@ -105,14 +105,14 @@ python tcp_receiver.py --duration 10 -o data/imu_test.csv
   "default_class": "other",
   "labels": [
     {"start": 0.0, "end": 5.0, "class": "idle"},
-    {"start": 5.0, "end": 10.0, "class": "vibration"},
-    {"start": 10.0, "end": 13.5, "class": "impact"}
+    {"start": 5.0, "end": 10.0, "class": "normal"},
+    {"start": 10.0, "end": 13.5, "class": "loose"}
   ]
 }
 ```
 
 - `default_class`: 未覆盖时间段的默认类别 (可选, 默认 "other")
-- `labels[].class`: 必须是 `CLASS_NAMES` 中定义的: `idle`, `vibration`, `impact`, `other`
+- `labels[].class`: 必须是 `CLASS_NAMES` 中定义的: `idle`, `normal`, `loose`, `imbalance`
 - 时间单位: 秒, 基于 FFT 帧中心时间
 
 ## Key Parameters
@@ -125,5 +125,5 @@ python tcp_receiver.py --duration 10 -o data/imu_test.csv
 | 频率分辨率 | 6.51 Hz/bin | 每个频率 bin 的跨度 |
 | CNN 窗口 | 16 帧 (0.61s) | 每个样本覆盖的时间 |
 | CNN stride | 1 帧 (0.038s) | 相邻样本中心间距 |
-| 类别 | idle/vibration/impact/other | 4 分类 |
+| 类别 | idle/normal/loose/imbalance | 4 分类 |
 | 模型参数 | 11,012 (43KB) | 轻量级, 可装入 ESP32-S3 |
