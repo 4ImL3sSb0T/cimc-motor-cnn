@@ -1,0 +1,96 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Conda
+.conda/
+*.conda
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Model files
+*.h5
+*.hdf5
+*.ckpt
+*.pb
+saved_model/
+checkpoints/
+logs/
+*.log
+
+# ONNX models
+*.onnx
+
+# Training data (large files)
+data/*.csv
+data/*.npy
+data/*.npz
+data/*.h5
+data/*.hdf5
+data/raw/
+data/processed/
+
+# TensorFlow
+*.tfevents.*
+*.tfrecords
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+models/
+data/
+output/
