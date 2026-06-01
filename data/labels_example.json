@@ -1,0 +1,9 @@
+{
+  "default_class": "other",
+  "labels": [
+    {"start": 0.0, "end": 5.0, "class": "idle"},
+    {"start": 5.0, "end": 10.0, "class": "vibration"},
+    {"start": 10.0, "end": 13.5, "class": "impact"}
+  ]
+}
+

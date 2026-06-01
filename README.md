@@ -34,7 +34,7 @@
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌───────────────┐    ┌──────────────┐    ┌──────────────┐
-│  xlsx 原始   │───▶│  去直流偏移   │───▶│  滑动窗口 FFT  │───▶│  CNN 样本    │───▶│  训练 / 导出  │
+│  xlsx/csv   │───▶│  去直流偏移   │───▶│  滑动窗口 FFT  │───▶│  CNN 样本    │───▶│  训练 / 导出  │
 │  加速度数据  │    │  (前1万行)    │    │  (1024点/256跳)│    │  (3,16,512)  │    │  TFLite int8 │
 └─────────────┘    └──────────────┘    └───────────────┘    └──────────────┘    └──────────────┘
 ```
@@ -43,10 +43,12 @@
 
 | 阶段 | 输入 | 输出 | 说明 |
 |------|------|------|------|
-| **数据加载** | `data/*.xlsx` | 3 个 float32 数组 | 读取 X/Y/Z 三轴加速度 |
+| **数据采集** | ESP32 IMU | `data/*.csv` | `tcp_receiver.py` 通过 TCP 实时录制 |
+| **数据加载** | `data/*.xlsx` 或 `*.csv` | 3 个 float32 数组 | 自动识别格式，读取 X/Y/Z 三轴加速度 |
 | **去直流偏移** | 原始信号 | 交流分量 | 用前 10000 行静置数据计算 DC 偏移并减去 |
 | **FFT 处理** | 交流分量 | 频谱图 `(n_frames, 512)` | Hann 窗 → FFT → 取幅度 → 转 dB |
 | **样本生成** | 3 轴频谱图 | `(N, 3, 16, 512)` | 滑动窗口取 16 帧，3 通道拼接 |
+| **标签生成** | JSON 配置 | `(N,)` int32 | 按时间段映射类别（可选） |
 | **训练** | `.npz` 样本 | `.keras` 模型 | CNN 分类训练 |
 | **导出** | `.keras` 模型 | `.tflite` / `.onnx` | int8 量化，部署到 ESP32 |
 
@@ -58,8 +60,12 @@
 tensorflow/
 ├── README.md                          # 本文件
 ├── CLAUDE.md                          # AI 辅助开发指引
-├── data/                              # 原始 xlsx 数据文件
-│   └── plotter-20260531-205012.xlsx
+├── tcp_receiver.py                    # ESP32 IMU 数据 TCP 接收器
+├── data/                              # 原始数据 + 标签配置
+│   ├── plotter-20260531-205012.xlsx   # PC 端采集的数据
+│   ├── imu_test.csv                   # ESP32 TCP 采集的数据
+│   ├── labels.json                    # 标签配置 (时间段→类别)
+│   └── labels_example.json            # 标签配置示例
 ├── output/                            # 生成的 .npz 样本文件
 │   └── plotter-20260531-205012_samples.npz
 ├── models/                            # 训练好的模型
@@ -71,14 +77,14 @@ tensorflow/
 │   └── model.onnx                     # ONNX 格式
 ├── src/
 │   ├── config.py                      # 全局配置 (FFT参数/CNN参数/路径)
-│   ├── visualizer.py                  # 可视化工具
+│   ├── visualizer.py                  # FFT 分析图 + CNN 样本查看器
 │   ├── data/                          # ── 数据处理模块 ──
-│   │   ├── data_loader.py             # xlsx 加载 + 去直流偏移
+│   │   ├── data_loader.py             # xlsx/csv 加载 + 去直流偏移
 │   │   ├── fft_processor.py           # 滑动窗口 FFT 处理
-│   │   ├── sample_generator.py        # CNN 样本生成/保存/加载
+│   │   ├── sample_generator.py        # CNN 样本生成 + 标签生成 + 保存
 │   │   └── process.py                 # 数据处理入口脚本
 │   └── cnn/                           # ── CNN 模块 ──
-│       ├── model.py                   # CNN 模型定义
+│       ├── model.py                   # CNN 模型定义 (11,012 参数)
 │       ├── dataset.py                 # 数据加载 + 归一化 + 增强
 │       ├── train.py                   # 训练脚本
 │       └── export.py                  # TFLite/ONNX 导出
@@ -104,16 +110,36 @@ conda activate tf_gpu
 
 ## 快速开始
 
-### 1. 数据处理 — 从 xlsx 生成 CNN 样本
+### 1. 数据采集（从 ESP32）
 
 ```bash
-conda activate tf_gpu
+# 连接 ESP32 WiFi 热点后，录制 10 秒数据
+python tcp_receiver.py --duration 10 -o data/imu_test.csv
+
+# 默认连接 192.168.4.1:8080，可自定义
+python tcp_receiver.py --ip 192.168.1.100 --port 9090 --duration 30
+```
+
+CSV 格式：
+```csv
+timestamp_us,datetime,acc_x,acc_y,acc_z
+1717200000000000,2026-06-01 12:00:00.000000,1.006974,-0.033726,0.017533
+...
+```
+
+### 2. 数据处理 — 生成 CNN 样本
+
+```bash
+# 无标签（演示用）
 python -m src.data.process
+
+# 带标签（训练用，需要先创建 data/labels.json）
+python -m src.data.process --label data/labels.json
 ```
 
 输出:
 ```
-读取: plotter-20260531-205012.xlsx
+读取: imu_test.csv
 总采样数: 89604
 直流偏移 (前10000行): X=1.006974, Y=-0.033726, Z=0.017533
 FFT 参数: size=1024, hop=256, bins=512, df=6.51Hz
@@ -121,16 +147,23 @@ FFT 参数: size=1024, hop=256, bins=512, df=6.51Hz
   处理 Y 轴 (89604 采样)...
   处理 Z 轴 (89604 采样)...
 生成样本: 332 个, shape=(332, 3, 16, 512), dtype=float32, range=[-78.1, 65.6]
-已保存: output/plotter-20260531-205012_samples.npz (27.9 MB)
+标签生成: 332 个样本, 匹配 332, 默认 0
+  idle: 121
+  vibration: 130
+  impact: 81
+已保存: output/imu_test_samples.npz (27.9 MB)
 ```
 
-### 2. 训练 CNN 模型
+### 3. 训练 CNN 模型
 
 ```bash
 python -m src.cnn.train
+
+# 自定义参数
+python -m src.cnn.train --data output/xxx_samples.npz --epochs 200 --batch-size 32
 ```
 
-### 3. 导出部署模型
+### 4. 导出部署模型
 
 ```bash
 python -m src.cnn.export
@@ -152,6 +185,22 @@ python -m src.cnn.model
 ---
 
 ## 模块详解
+
+### `tcp_receiver.py` — ESP32 数据采集
+
+通过 TCP 连接 ESP32，实时接收 IMU 加速度数据并保存为 CSV。
+
+**数据协议**:
+- 每个采样点: 12 字节 (3 × float32, 小端序): acc_x, acc_y, acc_z
+- 帧分隔符: 4 字节 0xFFFFFFFF (NaN 作为帧尾标记)
+- 采样率: 6667 Hz
+
+```bash
+python tcp_receiver.py                          # 默认 192.168.4.1:8080
+python tcp_receiver.py --ip 192.168.1.100       # 自定义 IP
+python tcp_receiver.py --duration 10            # 录制 10 秒后自动停止
+python tcp_receiver.py --output data/test.csv   # 指定输出文件
+```
 
 ### `src/config.py` — 全局配置
 
@@ -178,15 +227,24 @@ LEARNING_RATE = 1e-3
 
 ### `src/data/data_loader.py` — 数据加载
 
-- `find_xlsx(data_dir)`: 在目录中查找第一个 `.xlsx` 文件
+- `find_data_file(data_dir)`: 在目录中查找第一个 `.xlsx` 或 `.csv` 文件（优先 xlsx）
 - `load_xlsx(path)`: 读取 xlsx，返回 `(ax, ay, az)` 三个 float32 数组
+- `load_csv(path)`: 读取 TCP receiver 生成的 CSV，返回 `(ax, ay, az)`
+- `load_data(path)`: 自动识别格式并加载
 - `remove_dc_offset(ax, ay, az, static_n=10000)`: 用前 N 行静态数据计算直流偏移并减去
 
-xlsx 文件格式:
+支持的数据格式:
+
+**xlsx 格式** (PC 端采集):
 ```
 | PC Date | PC Time | Line 1 (X) | Line 2 (Y) | Line 3 (Z) |
 |---------|---------|-------------|-------------|-------------|
 | 日期    | 时间    | X轴加速度   | Y轴加速度   | Z轴加速度   |
+```
+
+**csv 格式** (ESP32 TCP 采集):
+```
+timestamp_us,datetime,acc_x,acc_y,acc_z
 ```
 
 ### `src/data/fft_processor.py` — FFT 处理
@@ -213,28 +271,33 @@ xlsx 文件格式:
 - 跳步大小: 256 采样点 (约 0.038 秒)
 - 89604 个采样 → 346 个时间帧
 
-### `src/data/sample_generator.py` — 样本生成
+### `src/data/sample_generator.py` — 样本生成 + 标签生成
 
 将 3 轴频谱图组合成 CNN 训练样本:
 
 ```
 X 轴频谱: (346, 512)  ─┐
-Y 轴频谱: (346, 512)  ─┼─ stack ─▶ (346, 3, 16, 512) ─▶ .npz
+Y 轴频谱: (346, 512)  ─┼─ stack ─▶ (332, 3, 16, 512) ─▶ .npz
 Z 轴频谱: (346, 512)  ─┘
 ```
 
 每个样本取连续 16 帧，stride=1 滑动，共生成 332 个样本。
 
+**标签生成** (`generate_labels`):
+- 根据 JSON 配置文件，将时间段映射到类别
+- CNN 样本 `i` 的中心时间: `((i + 7.5) * 256 + 512) / 6667` 秒
+
 **npz 文件格式**:
 - `samples`: shape `(N, 3, 16, 512)`, float32 — CNN 输入
-- `labels` (可选): shape `(N,)`, int32 — 分类标签
+- `labels` (可选): shape `(N,)`, int32 — 分类标签 (0=idle, 1=vibration, 2=impact, 3=other)
 
 ### `src/data/process.py` — 数据处理入口
 
 ```bash
-python -m src.data.process              # 默认: 生成 .npz 样本
-python -m src.data.process --viewer     # 交互式查看器 (需 GUI)
-python -m src.data.process --static     # 静态 FFT 分析图
+python -m src.data.process                              # 默认: 生成 .npz 样本
+python -m src.data.process --label data/labels.json     # 带标签生成
+python -m src.data.process --viewer                     # 交互式查看器 (需 GUI)
+python -m src.data.process --static                     # 静态 FFT 分析图
 ```
 
 ---
@@ -291,24 +354,26 @@ python -m src.data.process --static     # 静态 FFT 分析图
 
 ## 训练指南
 
-### 准备标签数据
+### 标注数据 — 配置文件方式
 
-当前数据没有标签。要训练分类模型，需要在 `.npz` 中添加 `labels` 数组:
+在 `data/` 目录下创建 JSON 标签配置文件:
 
-```python
-import numpy as np
-
-# 加载样本
-data = np.load("output/xxx_samples.npz")
-samples = data["samples"]  # (332, 3, 16, 512)
-
-# 创建标签 (示例: 前100个idle, 后232个vibration)
-labels = np.array([0]*100 + [1]*232, dtype=np.int32)
-
-# 保存带标签的 npz
-np.savez_compressed("output/xxx_samples_labeled.npz",
-                    samples=samples, labels=labels)
+```json
+{
+  "default_class": "other",
+  "labels": [
+    {"start": 0.0, "end": 5.0, "class": "idle"},
+    {"start": 5.0, "end": 10.0, "class": "vibration"},
+    {"start": 10.0, "end": 13.5, "class": "impact"}
+  ]
+}
 ```
+
+- `default_class`: 未覆盖时间段的默认类别（可选，默认 "other"）
+- `labels[].class`: 必须是 `CLASS_NAMES` 中定义的类别名
+- 时间单位: 秒，基于 FFT 帧中心时间
+
+先用 `--viewer` 查看频谱图确定各状态的时间段，再编写配置文件。
 
 ### 修改类别名
 
@@ -326,7 +391,7 @@ NUM_CLASSES = len(CLASS_NAMES)
 python -m src.cnn.train
 
 # 自定义参数
-python -m src.cnn.train --data output/xxx_samples_labeled.npz --epochs 200 --batch-size 32
+python -m src.cnn.train --data output/xxx_samples.npz --epochs 200 --batch-size 32
 ```
 
 ### 训练回调
@@ -407,13 +472,20 @@ ESP32 推理时需要:
 
 ## 常见问题
 
-### Q: 数据没有标签怎么训练?
+### Q: 如何标注数据?
 
-需要手动标注。可以先用 `--viewer` 查看不同时间段的频谱特征，然后编写脚本给 `.npz` 添加 `labels` 数组。
+在 `data/` 目录下创建 JSON 标签配置文件，指定每个时间段对应的类别。先用 `--viewer` 查看频谱图确定时间段，然后运行 `python -m src.data.process --label data/labels.json` 生成带标签的 `.npz`。
 
-### Q: 如何添加新的 xlsx 数据?
+### Q: 数据没有标签能训练吗?
 
-把新的 `.xlsx` 文件放入 `data/` 目录，重新运行 `python -m src.data.process`。
+可以训练，但会使用随机标签（仅用于演示流程验证）。实际训练必须有真实标签。
+
+### Q: 如何添加新的数据?
+
+- **xlsx**: 把新的 `.xlsx` 文件放入 `data/` 目录
+- **csv**: 运行 `python tcp_receiver.py -o data/xxx.csv` 录制
+
+然后重新运行 `python -m src.data.process`。
 
 ### Q: 如何修改 FFT 参数?
 

@@ -4,7 +4,8 @@
       "Bash(claude mcp *)",
       "Bash(/home/ws/miniconda3/envs/tf_gpu/bin/pip list *)",
       "Bash(/home/ws/miniconda3/envs/tf_gpu/bin/python *)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(conda run *)"
     ]
   }
 }

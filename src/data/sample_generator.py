@@ -3,10 +3,14 @@
 输出形状: (3, n_frames, freq_bins) 即 (channels, frames, freq_bins)
 """
 
+import json
 import numpy as np
 from pathlib import Path
 
-from src.config import CNN_SAMPLE_FRAMES, SP_FREQ_BINS, SP_HOP_SIZE, SP_SAMPLE_RATE
+from src.config import (
+    CNN_SAMPLE_FRAMES, SP_FREQ_BINS, SP_HOP_SIZE, SP_SAMPLE_RATE,
+    SP_FFT_SIZE, CLASS_NAMES,
+)
 
 
 def extract_sample(
@@ -54,9 +58,78 @@ def generate_samples(
     return samples
 
 
-def save_samples(samples: np.ndarray, out_path: str | Path) -> None:
-    """保存样本到 .npz"""
-    np.savez_compressed(str(out_path), samples=samples)
+def generate_labels(
+    n_samples: int,
+    label_config: dict,
+) -> np.ndarray:
+    """
+    根据配置文件生成标签数组。
+
+    CNN 样本 i 的中心时间:
+      center_time(i) = ((i + 7.5) * HOP_SIZE + FFT_SIZE / 2) / SAMPLE_RATE
+
+    Args:
+        n_samples: CNN 样本总数
+        label_config: 从 JSON 解析的配置字典，格式:
+            {
+              "default_class": "other",       # 可选，默认 "other"
+              "labels": [
+                {"start": 0.0, "end": 5.0, "class": "idle"},
+                ...
+              ]
+            }
+
+    Returns:
+        labels: shape=(N,), int32 — 每个样本对应的类别索引
+    """
+    default_class = label_config.get("default_class", "other")
+    default_idx = CLASS_NAMES.index(default_class) if default_class in CLASS_NAMES else len(CLASS_NAMES) - 1
+
+    segments = label_config.get("labels", [])
+    # 预处理: 将 class 名转为索引
+    seg_idx = []
+    for seg in segments:
+        cls_name = seg["class"]
+        if cls_name not in CLASS_NAMES:
+            print(f"警告: 未知类别 '{cls_name}'，跳过该时间段 [{seg['start']}, {seg['end']}]")
+            continue
+        seg_idx.append({
+            "start": float(seg["start"]),
+            "end": float(seg["end"]),
+            "cls": CLASS_NAMES.index(cls_name),
+        })
+
+    labels = np.full(n_samples, default_idx, dtype=np.int32)
+    matched = 0
+
+    for i in range(n_samples):
+        # CNN 样本 i 的中心时间
+        t = ((i + (CNN_SAMPLE_FRAMES - 1) / 2) * SP_HOP_SIZE + SP_FFT_SIZE / 2) / SP_SAMPLE_RATE
+        for seg in seg_idx:
+            if seg["start"] <= t < seg["end"]:
+                labels[i] = seg["cls"]
+                matched += 1
+                break
+
+    print(f"标签生成: {n_samples} 个样本, 匹配 {matched}, 默认 {n_samples - matched}")
+    # 统计各类别数量
+    for cls_idx, cls_name in enumerate(CLASS_NAMES):
+        count = (labels == cls_idx).sum()
+        if count > 0:
+            print(f"  {cls_name}: {count}")
+    return labels
+
+
+def save_samples(
+    samples: np.ndarray,
+    out_path: str | Path,
+    labels: np.ndarray | None = None,
+) -> None:
+    """保存样本到 .npz，可选附带标签"""
+    if labels is not None:
+        np.savez_compressed(str(out_path), samples=samples, labels=labels)
+    else:
+        np.savez_compressed(str(out_path), samples=samples)
     size_mb = Path(out_path).stat().st_size / 1024 / 1024
     print(f"已保存: {out_path} ({size_mb:.1f} MB)")
 
