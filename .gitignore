@@ -92,5 +92,5 @@ coverage.xml
 .pytest_cache/
 
 models/
-data/
+*.xlsx
 output/
