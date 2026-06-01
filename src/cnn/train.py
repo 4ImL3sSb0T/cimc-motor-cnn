@@ -9,18 +9,12 @@ CNN 训练脚本
      │                                              │
      └──────────── 保存 meta.json (归一化参数) ←─────┘
 
-=== 什么是训练? ===
-训练就是让模型反复看训练数据，不断调整内部参数，使得:
-  - 模型对训练数据的预测越来越准 (loss 下降)
-  - 模型对没见过的数据也能预测准 (验证集 accuracy 上升)
-
-一个 epoch = 把所有训练数据完整看一遍
-通常需要几十到几百个 epoch 才能训练好
-
 === 用法 ===
-  python -m src.cnn.train                              # 自动找 output/*.npz
-  python -m src.cnn.train --data output/xxx.npz        # 指定数据文件
-  python -m src.cnn.train --epochs 200 --batch-size 32 # 自定义参数
+  python -m src.cnn.train                                        # 自动找 output/*.npz
+  python -m src.cnn.train --data output/a.npz                    # 指定单个文件
+  python -m src.cnn.train --data output/a.npz output/b.npz       # 指定多个文件，合并训练
+  python -m src.cnn.train --data output/*.npz                    # 通配符，合并所有
+  python -m src.cnn.train --epochs 200 --batch-size 32           # 自定义参数
 """
 
 import argparse
@@ -31,6 +25,9 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+import matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 
 from src.config import (
     BATCH_SIZE, EPOCHS, LEARNING_RATE, PATIENCE,
@@ -41,22 +38,78 @@ from src.cnn.dataset import (
     load_npz, normalize, train_val_split, make_tf_dataset,
 )
 
+# 中文字体 (同 visualizer.py)
+_CN_FONT = None
+for _name in ["Microsoft YaHei", "SimHei", "NSimSun"]:
+    _matches = [f for f in fm.fontManager.ttflist if f.name == _name]
+    if _matches:
+        _CN_FONT = fm.FontProperties(fname=_matches[0].fname)
+        break
+if _CN_FONT is None:
+    from pathlib import Path as _P
+    for _fname in ["msyh.ttc", "simhei.ttf"]:
+        _fpath = _P("/mnt/c/Windows/Fonts") / _fname
+        if _fpath.exists():
+            fm.fontManager.addfont(str(_fpath))
+            _CN_FONT = fm.FontProperties(fname=str(_fpath))
+            break
+if _CN_FONT is None:
+    matplotlib.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+    matplotlib.rcParams["axes.unicode_minus"] = False
+    _CN_FONT = fm.FontProperties()
 
-def find_npz(data_dir: Path) -> Path | None:
+
+def find_npz(data_dir: Path) -> list[Path]:
+    """在目录中找到所有 *_samples.npz 文件"""
+    return sorted(data_dir.glob("*_samples.npz"))
+
+
+def load_multiple_npz(npz_paths: list[str | Path]) -> tuple[np.ndarray, np.ndarray]:
     """
-    在目录中找到第一个 .npz 样本文件。
-    匹配模式: *_samples.npz
+    加载并合并多个 .npz 文件。
+
+    每个文件必须包含 "samples" 和 "labels" 键。
+    只合并有标签的文件，跳过无标签的并打印警告。
+
+    Returns:
+        (samples, labels): 合并后的样本和标签
     """
-    files = sorted(data_dir.glob("*_samples.npz"))
-    return files[0] if files else None
+    all_samples = []
+    all_labels = []
+
+    for p in npz_paths:
+        p = Path(p)
+        data = np.load(str(p))
+        samples = data["samples"]
+        labels = data.get("labels")
+
+        if labels is None:
+            print(f"  跳过 {p.name} (无标签)")
+            continue
+
+        # 转置: (N, 3, 16, 512) → (N, 16, 512, 3)
+        samples = np.transpose(samples, (0, 2, 3, 1)).astype(np.float32)
+        labels = labels.astype(np.int32)
+
+        print(f"  {p.name}: {samples.shape[0]} 样本")
+        all_samples.append(samples)
+        all_labels.append(labels)
+
+    if not all_samples:
+        raise ValueError("没有可用的带标签 .npz 文件")
+
+    samples = np.concatenate(all_samples, axis=0)
+    labels = np.concatenate(all_labels, axis=0)
+    print(f"合并总计: {samples.shape[0]} 样本")
+    return samples, labels
 
 
-def train(npz_path: str, epochs: int = EPOCHS, batch_size: int = BATCH_SIZE):
+def train(npz_paths: list[str], epochs: int = EPOCHS, batch_size: int = BATCH_SIZE):
     """
     完整训练流程 — 从加载数据到保存模型。
 
     Args:
-        npz_path: .npz 样本文件的路径
+        npz_paths: .npz 样本文件路径列表 (支持多个文件合并训练)
         epochs: 训练轮数 (默认100)
         batch_size: 每批样本数 (默认16)
 
@@ -64,36 +117,24 @@ def train(npz_path: str, epochs: int = EPOCHS, batch_size: int = BATCH_SIZE):
         (model, history):
           - model: 训练好的 Keras 模型
           - history: 训练历史 (包含每个 epoch 的 loss 和 accuracy)
-
-    === 训练过程中的关键指标 ===
-
-    loss (损失): 越小越好，表示模型预测和真实标签的差距
-    accuracy (准确率): 越高越好，表示预测正确的比例
-    val_loss / val_accuracy: 在验证集上的 loss/accuracy
-
-    理想情况:
-      - loss 和 val_loss 都下降
-      - accuracy 和 val_accuracy 都上升
-      - 训练集和验证集的差距不大
-
-    过拟合的信号:
-      - loss 继续下降，但 val_loss 开始上升
-      - accuracy 很高 (如 99%)，但 val_accuracy 很低 (如 70%)
     """
 
     # ==================================================================
     # 第 1 步: 加载数据
     # ==================================================================
-    # 从 .npz 文件中读取样本和标签
-    # samples: (N, 16, 512, 3) — N 个频谱图样本
-    # labels: (N,) — 每个样本对应的类别 (0,1,2,3...)
-    samples, labels = load_npz(npz_path)
-    print(f"样本形状: {samples.shape}  标签: {'有' if labels is not None else '无'}")
+    if len(npz_paths) == 1:
+        # 单文件: 直接加载
+        samples, labels = load_npz(npz_paths[0])
+    else:
+        # 多文件: 合并加载
+        print(f"合并 {len(npz_paths)} 个文件:")
+        samples, labels = load_multiple_npz(npz_paths)
 
-    # 如果没有标签，用随机标签演示 (实际训练时必须有真实标签!)
     if labels is None:
-        print("警告: 没有标签数据，生成虚拟标签用于演示")
-        labels = np.random.randint(0, NUM_CLASSES, size=len(samples))
+        print("错误: 数据没有标签，无法训练。请先用 --label 生成带标签的样本")
+        sys.exit(1)
+
+    print(f"样本形状: {samples.shape}  标签: {len(labels)}")
 
     # ==================================================================
     # 第 2 步: 标准化
@@ -235,7 +276,75 @@ def train(npz_path: str, epochs: int = EPOCHS, batch_size: int = BATCH_SIZE):
     model.save(str(MODEL_DIR / "final.keras"))
     print(f"模型已保存: {MODEL_DIR}")
 
+    # ==================================================================
+    # 第 10 步: 训练可视化
+    # ==================================================================
+    plot_training_result(model, history, x_val, y_val)
+
     return model, history
+
+
+def plot_training_result(
+    model: keras.Model,
+    history,
+    x_val: np.ndarray,
+    y_val: np.ndarray,
+):
+    """绘制训练曲线 + 混淆矩阵"""
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle("训练结果", fontproperties=_CN_FONT, fontsize=14)
+
+    # ── 训练曲线 ──
+    h = history.history
+    epochs_range = range(1, len(h["loss"]) + 1)
+
+    ax = axes[0]
+    ax.plot(epochs_range, h["loss"], "b-", label="训练 loss")
+    ax.plot(epochs_range, h["val_loss"], "r-", label="验证 loss")
+    ax.set_xlabel("Epoch", fontproperties=_CN_FONT)
+    ax.set_ylabel("Loss", fontproperties=_CN_FONT)
+    ax.set_title("损失曲线", fontproperties=_CN_FONT)
+    ax.legend(prop=_CN_FONT)
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    ax.plot(epochs_range, h["accuracy"], "b-", label="训练 accuracy")
+    ax.plot(epochs_range, h["val_accuracy"], "r-", label="验证 accuracy")
+    ax.set_xlabel("Epoch", fontproperties=_CN_FONT)
+    ax.set_ylabel("Accuracy", fontproperties=_CN_FONT)
+    ax.set_title("准确率曲线", fontproperties=_CN_FONT)
+    ax.legend(prop=_CN_FONT)
+    ax.grid(True, alpha=0.3)
+
+    # ── 混淆矩阵 ──
+    y_pred = model.predict(x_val, verbose=0)
+    y_pred_cls = np.argmax(y_pred, axis=1)
+
+    cm = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=int)
+    for t, p in zip(y_val, y_pred_cls):
+        cm[t][p] += 1
+
+    ax = axes[2]
+    im = ax.imshow(cm, cmap="Blues")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    for i in range(NUM_CLASSES):
+        for j in range(NUM_CLASSES):
+            color = "white" if cm[i, j] > cm.max() / 2 else "black"
+            ax.text(j, i, str(cm[i, j]), ha="center", va="center",
+                    color=color, fontsize=12)
+    ax.set_xticks(range(NUM_CLASSES))
+    ax.set_yticks(range(NUM_CLASSES))
+    ax.set_xticklabels(CLASS_NAMES, fontproperties=_CN_FONT, fontsize=9)
+    ax.set_yticklabels(CLASS_NAMES, fontproperties=_CN_FONT, fontsize=9)
+    ax.set_xlabel("预测", fontproperties=_CN_FONT)
+    ax.set_ylabel("真实", fontproperties=_CN_FONT)
+    ax.set_title("混淆矩阵", fontproperties=_CN_FONT)
+
+    plt.tight_layout()
+    save_path = MODEL_DIR / "training_result.png"
+    fig.savefig(str(save_path), dpi=150)
+    print(f"训练结果图已保存: {save_path}")
+    plt.show()
 
 
 def main():
@@ -243,19 +352,34 @@ def main():
     命令行入口。
 
     支持的参数:
-      --data: .npz 文件路径 (不指定则自动查找 output/ 目录)
+      --data: .npz 文件路径，支持多个文件或通配符 (不指定则自动查找 output/ 目录)
       --epochs: 训练轮数 (默认100)
       --batch-size: 每批样本数 (默认16)
 
     示例:
-      python -m src.cnn.train
-      python -m src.cnn.train --data output/samples_labeled.npz
+      python -m src.cnn.train                                        # 自动找 output/*.npz
+      python -m src.cnn.train --data output/a.npz                    # 单个文件
+      python -m src.cnn.train --data output/a.npz output/b.npz       # 多个文件合并
+      python -m src.cnn.train --data output/*.npz                    # 通配符
       python -m src.cnn.train --epochs 200 --batch-size 32
     """
-    # 创建命令行参数解析器
+    # argparse 不直接支持 nargs='+' 和可选参数的组合
+    # 手动解析: --data 后面所有非 -- 开头的参数都当作文件路径
+    npz_paths = []
+    i = 1
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg == "--data":
+            i += 1
+            while i < len(sys.argv) and not sys.argv[i].startswith("--"):
+                npz_paths.append(sys.argv[i])
+                i += 1
+            continue
+        i += 1
+
+    # 解析其他参数
     parser = argparse.ArgumentParser(description="训练 IMU CNN 模型")
-    parser.add_argument("--data", type=str, default=None,
-                        help="npz 文件路径 (默认自动查找)")
+    parser.add_argument("--data", type=str, nargs="+", default=None)
     parser.add_argument("--epochs", type=int, default=EPOCHS,
                         help="训练轮数 (默认: %(default)s)")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE,
@@ -263,17 +387,20 @@ def main():
     args = parser.parse_args()
 
     # 确定数据文件路径
-    npz_path = args.data
-    if npz_path is None:
+    if not npz_paths:
         # 没指定路径，自动在 output/ 目录下找
-        npz_path = find_npz(OUTPUT_DIR)
-        if npz_path is None:
+        found = find_npz(OUTPUT_DIR)
+        if not found:
             print(f"未找到 npz 文件，请先运行 python -m src.data.process 生成样本")
             sys.exit(1)
-    print(f"数据: {npz_path}")
+        npz_paths = [str(p) for p in found]
+
+    print(f"数据文件: {len(npz_paths)} 个")
+    for p in npz_paths:
+        print(f"  {p}")
 
     # 开始训练
-    train(str(npz_path), epochs=args.epochs, batch_size=args.batch_size)
+    train(npz_paths, epochs=args.epochs, batch_size=args.batch_size)
 
 
 if __name__ == "__main__":
