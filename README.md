@@ -87,6 +87,7 @@ tensorflow/
 │       ├── model.py                   # CNN 模型定义 (11,012 参数)
 │       ├── dataset.py                 # 数据加载 + 归一化 + 增强
 │       ├── train.py                   # 训练脚本
+│       ├── predict.py                 # 推理脚本
 │       └── export.py                  # TFLite/ONNX 导出
 └── tests/                             # 测试代码
 ```
@@ -166,7 +167,20 @@ python -m src.cnn.train
 python -m src.cnn.train --data output/xxx_samples.npz --epochs 200 --batch-size 32
 ```
 
-### 4. 导出部署模型
+### 4. 推理 — 用模型预测新数据
+
+```bash
+# 自动找数据和模型
+python -m src.cnn.predict
+
+# 指定数据和模型
+python -m src.cnn.predict --data data/imu_new.csv --model models/best.keras
+
+# 保存结果到 CSV
+python -m src.cnn.predict --data data/imu_new.csv --output result.csv
+```
+
+### 5. 导出部署模型
 
 ```bash
 python -m src.cnn.export

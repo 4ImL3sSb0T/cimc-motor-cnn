@@ -64,6 +64,10 @@ python -m src.data.process --static --data data/imu_test.csv
 # 训练 CNN 模型
 python -m src.cnn.train
 
+# 推理 (用训练好的模型预测新数据)
+python -m src.cnn.predict --data data/imu_new.csv
+python -m src.cnn.predict --data data/imu_new.csv --output result.csv
+
 # 导出 TFLite / ONNX 模型
 python -m src.cnn.export
 
