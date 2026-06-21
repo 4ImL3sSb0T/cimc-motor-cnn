@@ -26,7 +26,9 @@
 
 **应用场景**: 电机状态监测、振动故障检测、运动模式识别
 
-**最终目标**: 在 PC 上训练模型，导出量化后的 TFLite int8 模型，部署到 ESP32-S3 嵌入式设备上做实时推理。
+**最终目标**: 在 PC 上训练模型，导出 ONNX 模型，部署到 ESP32-S3 嵌入式设备上做实时推理。
+
+> ⚠️ **TFLite 导出暂不可用**: 因 TensorFlow 2.16.x MLIR bug ([tensorflow#63987](https://github.com/tensorflow/tensorflow/issues/63987))，int8 量化 TFLite 导出失败。当前使用 ONNX 格式作为替代方案。
 
 ---
 
@@ -35,7 +37,7 @@
 ```
 ┌─────────────┐    ┌──────────────┐    ┌───────────────┐    ┌──────────────┐    ┌──────────────┐
 │  xlsx/csv   │───▶│  去直流偏移   │───▶│  滑动窗口 FFT  │───▶│  CNN 样本    │───▶│  训练 / 导出  │
-│  加速度数据  │    │  (前1万行)    │    │  (1024点/256跳)│    │  (3,16,512)  │    │  TFLite int8 │
+│  加速度数据  │    │  (前1万行)    │    │  (1024点/256跳)│    │  (3,16,512)  │    │    ONNX      │
 └─────────────┘    └──────────────┘    └───────────────┘    └──────────────┘    └──────────────┘
 ```
 
@@ -50,7 +52,7 @@
 | **样本生成** | 3 轴频谱图 | `(N, 3, 16, 512)` | 滑动窗口取 16 帧，3 通道拼接 |
 | **标签生成** | JSON 配置 | `(N,)` int32 | 按时间段映射类别（可选） |
 | **训练** | `.npz` 样本 | `.keras` 模型 | CNN 分类训练 |
-| **导出** | `.keras` 模型 | `.tflite` / `.onnx` | int8 量化，部署到 ESP32 |
+| **导出** | `.keras` 模型 | `.onnx` | ONNX 导出，部署到 ESP32 |
 
 ---
 
@@ -62,18 +64,14 @@ tensorflow/
 ├── CLAUDE.md                          # AI 辅助开发指引
 ├── tcp_receiver.py                    # ESP32 IMU 数据 TCP 接收器
 ├── data/                              # 原始数据 + 标签配置
-│   ├── plotter-20260531-205012.xlsx   # PC 端采集的数据
-│   ├── imu_test.csv                   # ESP32 TCP 采集的数据
-│   ├── labels.json                    # 标签配置 (时间段→类别)
-│   └── labels_example.json            # 标签配置示例
+│   ├── imu_YYYYMMDD_HHMMSS_xxx.csv    # ESP32 TCP 采集的数据
+│   └── imu_YYYYMMDD_HHMMSS_xxx.json   # 对应标签配置 (时间段→类别)
 ├── output/                            # 生成的 .npz 样本文件
 │   └── plotter-20260531-205012_samples.npz
 ├── models/                            # 训练好的模型
 │   ├── best.keras                     # 最佳验证精度模型
 │   ├── final.keras                    # 最终模型
 │   ├── meta.json                      # 归一化参数 + 类别名
-│   ├── model_int8.tflite              # int8 量化 TFLite (ESP32 部署)
-│   ├── model_float32.tflite           # float32 TFLite
 │   └── model.onnx                     # ONNX 格式
 ├── src/
 │   ├── config.py                      # 全局配置 (FFT参数/CNN参数/路径)
@@ -88,8 +86,8 @@ tensorflow/
 │       ├── dataset.py                 # 数据加载 + 归一化 + 增强
 │       ├── train.py                   # 训练脚本
 │       ├── predict.py                 # 推理脚本
-│       └── export.py                  # TFLite/ONNX 导出
-└── tests/                             # 测试代码
+│       └── export.py                  # ONNX 导出
+└── tests/                             # 测试代码 (待补充)
 ```
 
 ---
@@ -448,15 +446,10 @@ python -m src.cnn.export
 | 格式 | 文件 | 用途 |
 |------|------|------|
 | Keras | `models/best.keras` | PC 端继续训练/微调 |
-| TFLite f32 | `models/model_float32.tflite` | 测试/验证 |
-| TFLite int8 | `models/model_int8.tflite` | **ESP32-S3 部署** |
-| ONNX | `models/model.onnx` | 其他推理框架 |
+| ONNX | `models/model.onnx` | 跨平台推理部署 |
 
-### int8 量化细节
-
-- 使用训练数据的前 200 个样本作为校准集
-- 输入/输出均为 int8 类型
-- 推理时需要对输入做归一化 (使用 `meta.json` 中的 mean/std)
+> **注**: TFLite 导出因 TensorFlow 2.16.x MLIR bug 暂不可用。当前使用 ONNX 格式部署。
+> 详见 [tensorflow#63987](https://github.com/tensorflow/tensorflow/issues/63987)
 
 ### `meta.json` 内容
 
@@ -475,7 +468,7 @@ python -m src.cnn.export
 ESP32 推理时需要:
 1. 采集 16 帧 × 1024 点 FFT → 得到 `(3, 16, 512)` 频谱数据
 2. 用 `meta.json` 中的 mean/std 做归一化
-3. 量化为 int8 送入 TFLite 模型
+3. 送入 ONNX 模型推理
 4. 输出 4 个类别的概率
 
 ---
@@ -523,6 +516,6 @@ ESP32 推理时需要:
 
 ### Q: 如何在 ESP32 上使用导出的模型?
 
-1. 将 `model_int8.tflite` 和 `meta.json` 部署到 ESP32
-2. 使用 TensorFlow Lite Micro 解释器加载模型
-3. 推理前用 `meta.json` 中的参数做归一化和量化
+1. 将 `model.onnx` 和 `meta.json` 部署到 ESP32
+2. 使用 ONNX Runtime 或等效推理引擎加载模型
+3. 推理前用 `meta.json` 中的参数做归一化
