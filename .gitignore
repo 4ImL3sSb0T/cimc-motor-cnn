@@ -95,3 +95,5 @@ models/
 *.xlsx
 output/
 ./data/
+
+data/*

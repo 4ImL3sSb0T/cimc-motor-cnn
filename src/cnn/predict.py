@@ -136,9 +136,9 @@ def predict(
     print(f"最低置信度: {confidence.min():.4f}")
 
     # 低置信度样本警告
-    low_conf = confidence < 0.6
+    low_conf = confidence < 0.9
     if low_conf.sum() > 0:
-        print(f"\n⚠ 低置信度样本 (<0.6): {low_conf.sum()} 个")
+        print(f"\n⚠ 低置信度样本 (<90%): {low_conf.sum()} 个")
 
     # ── 9. 保存 CSV ──
     if output_path:
@@ -186,7 +186,7 @@ def plot_prediction(
 
     # ── 置信度分布直方图 ──
     axes[1].hist(confidence, bins=20, edgecolor="black", alpha=0.7)
-    axes[1].axvline(0.6, color="r", linestyle="--", label="0.6 阈值")
+    axes[1].axvline(0.9, color="r", linestyle="--", label="0.9 阈值")
     axes[1].set_xlabel("置信度", fontproperties=_CN_FONT)
     axes[1].set_ylabel("样本数", fontproperties=_CN_FONT)
     axes[1].set_title("置信度分布", fontproperties=_CN_FONT)

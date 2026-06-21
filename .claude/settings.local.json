@@ -7,7 +7,9 @@
       "Bash(python3 *)",
       "Bash(conda run *)",
       "mcp__tavily__tavily_search",
-      "mcp__tavily__tavily_extract"
+      "mcp__tavily__tavily_extract",
+      "mcp__codegraph__codegraph_explore",
+      "Bash(/c/Users/yuang/.claude/plugins/cache/claude-plugins-official/superpowers/5.1.0/skills/brainstorming/scripts/start-server.sh *)"
     ]
   }
 }
