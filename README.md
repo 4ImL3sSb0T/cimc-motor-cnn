@@ -82,7 +82,7 @@ tensorflow/
 │   │   ├── sample_generator.py        # CNN 样本生成 + 标签生成 + 保存
 │   │   └── process.py                 # 数据处理入口脚本
 │   └── cnn/                           # ── CNN 模块 ──
-│       ├── model.py                   # CNN 模型定义 (11,012 参数)
+│       ├── model.py                   # CNN 模型定义 (35,850 参数, v2)
 │       ├── dataset.py                 # 数据加载 + 归一化 + 增强
 │       ├── train.py                   # 训练脚本
 │       ├── predict.py                 # 推理脚本
@@ -330,49 +330,56 @@ python -m src.data.process --static                     # 静态 FFT 分析图
 
 ### 设计原则
 
-- **轻量级**: 总参数 11,012 (43 KB)，适合 ESP32-S3 部署
+- **轻量级**: 总参数 35,850 (140 KB float32)，适合 ESP32-S3 部署
+- **残差连接 (Residual)**: 改善梯度流，防止 SeparableConv 表达力不足导致的退化
+- **SE 注意力机制**: 自适应强调重要频率通道，区分故障特征频段与噪声频段
+- **温和频率压缩**: 512→256→128→64 (vs 旧版 512→128→32→8)，保留更多频率细节
 - **深度可分离卷积**: 减少计算量和参数量
-- **全局平均池化**: 替代大尺寸全连接层
-- **BatchNorm + ReLU**: 标准训练范式
 
-### 网络结构
+### 网络结构 (v2, 默认)
 
 ```
 输入: (16, 512, 3)  — 16帧 × 512频率bin × 3通道(X/Y/Z)
   │
-  ├─ Conv2D(16, 3×3) ─ BN ─ ReLU           # 提取低层特征
-  ├─ MaxPool(2, 4)  → (8, 128, 16)         # 降维
+  ├─ Conv2D(20, 1×7) ─ BN ─ ReLU           # 频率方向宽kernel提取谐波
+  ├─ MaxPool(3, 2)  → (6, 256, 20)         # 温和压缩: 频率÷2, 时间÷3
   │
-  ├─ SeparableConv2D(32, 3×3) ─ BN ─ ReLU  # 深度可分离
-  ├─ MaxPool(2, 4)  → (4, 32, 32)
+  ├─ SepConv(40) ─ BN ─ ReLU ─ SE ─ MaxPool(2,2)  ─┐  # 残差块 + SE注意力
+  │                                Conv1×1(40) ─ BN ─ MaxPool(2,2) ─┘
+  ├─ Add ─ ReLU  → (3, 128, 40)
   │
-  ├─ SeparableConv2D(64, 3×3) ─ BN ─ ReLU
-  ├─ MaxPool(2, 4)  → (2, 8, 64)
+  ├─ SepConv(80) ─ BN ─ ReLU ─ SE ─ MaxPool(2,2)  ─┐  # 残差块 + SE注意力
+  │                                Conv1×1(80) ─ BN ─ MaxPool(2,2) ─┘
+  ├─ Add ─ ReLU  → (2, 64, 80)
   │
-  ├─ SeparableConv2D(64, 3×3) ─ BN ─ ReLU
+  ├─ SepConv(96) ─ BN ─ ReLU  ─┐                  # 残差块 (无池化,无SE)
+  │             Conv1×1(96) ─ BN ─┘
+  ├─ Add ─ ReLU  → (2, 64, 96)
   │
-  ├─ GlobalAveragePooling  → (64,)          # 全局特征
-  ├─ Dropout(0.3)
-  ├─ Dense(32, ReLU)
-  ├─ Dropout(0.2)
-  └─ Dense(num_classes, Softmax)            # 分类输出
+  ├─ GlobalAveragePooling  → (96,)            # 全局特征
+  ├─ Dropout(0.1)
+  ├─ Dense(48, ReLU)
+  ├─ Dropout(0.15)
+  └─ Dense(num_classes, Softmax)              # 分类输出
        │
        ▼
 输出: (num_classes,)  — 类别概率
 ```
 
-### 参数量统计
+> 旧版 v1 (`build_model_v1()`) 保留在 `model.py` 中，供对比实验使用。
+
+### 参数量统计 (v2)
 
 | 层 | 参数量 |
 |----|--------|
-| Conv2D(16) | 432 |
-| SeparableConv2D(32) | 656 |
-| SeparableConv2D(64) | 2,336 |
-| SeparableConv2D(64) | 4,672 |
-| BatchNorm × 4 | 704 |
-| Dense(32) | 2,080 |
-| Dense(4) | 132 |
-| **总计** | **11,012 (43 KB)** |
+| Conv2D(20, 1×7) | 420 |
+| SepConv(40) + SE + 投影 | 2,790 |
+| SepConv(80) + SE + 投影 | 10,380 |
+| SepConv(96) + 投影 | 16,464 |
+| BatchNorm × 9 | 1,808 |
+| Dense(48) | 4,656 |
+| Dense(4) | 196 |
+| **总计** | **35,850 (140 KB)** |
 
 ---
 
@@ -484,7 +491,7 @@ ESP32 推理时需要:
 | 频率分辨率 | 6.51 Hz | 6667 / 1024 |
 | 样本帧数 | 16 | 每个 CNN 输入的时间帧 |
 | CNN 输入 | (16, 512, 3) | frames × freq_bins × channels |
-| 模型参数 | 11,012 | 43 KB |
+| 模型参数 | 35,850 | 140 KB |
 | 分类类别 | 4 | idle/normal/loose/imbalance |
 
 ---

@@ -21,7 +21,7 @@ src/
 │   └── process.py             # 数据处理入口
 ├── cnn/
 │   ├── __init__.py
-│   ├── model.py               # CNN 模型定义 (11,012 参数)
+│   ├── model.py               # CNN 模型定义 (35,850 参数, v2)
 │   ├── dataset.py             # 数据加载 + 归一化 + 增强
 │   ├── train.py               # 训练脚本
 │   ├── predict.py             # 推理脚本
@@ -145,4 +145,4 @@ python tcp_receiver.py --duration 10 -o data/imu_test.csv
 | CNN 窗口 | 16 帧 (0.61s) | 每个样本覆盖的时间 |
 | CNN stride | 1 帧 (0.038s) | 相邻样本中心间距 |
 | 类别 | idle/normal/loose/imbalance | 4 分类 |
-| 模型参数 | 11,012 (43KB) | 轻量级, 可装入 ESP32-S3 |
+| 模型参数 | 35,850 (140KB) | 残差+SE注意力, v2 默认 |
