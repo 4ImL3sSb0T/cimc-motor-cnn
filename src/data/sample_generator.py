@@ -9,8 +9,8 @@ import numpy as np
 from pathlib import Path
 
 from src.config import (
-    CNN_SAMPLE_FRAMES, SP_FREQ_BINS, SP_HOP_SIZE, SP_SAMPLE_RATE,
-    SP_FFT_SIZE, CLASS_NAMES, NUM_CHANNELS,
+    CNN_SAMPLE_FRAMES, SP_FREQ_BINS, CNN_FREQ_BINS, SP_HOP_SIZE, SP_SAMPLE_RATE,
+    SP_FFT_SIZE, SP_FREQ_RES, CLASS_NAMES, NUM_CHANNELS,
 )
 
 
@@ -18,18 +18,20 @@ def extract_sample(
     spectrograms: dict[str, np.ndarray],
     start_frame: int,
     n_frames: int = CNN_SAMPLE_FRAMES,
+    n_freq_bins: int = CNN_FREQ_BINS,
 ) -> np.ndarray:
     """
     从 4 通道频谱图中提取一个 CNN 样本。
     spectrograms: {"x": (n_total, 512), "y": ..., "z": ..., "magnitude": ...}
-    返回: shape=(4, n_frames, 512), float32
+    n_freq_bins: 保留的频率 bin 数 (默认 CNN_FREQ_BINS=128，裁剪低频段)
+    返回: shape=(4, n_frames, n_freq_bins), float32
     """
     end = start_frame + n_frames
     return np.stack([
-        spectrograms["x"][start_frame:end],
-        spectrograms["y"][start_frame:end],
-        spectrograms["z"][start_frame:end],
-        spectrograms["magnitude"][start_frame:end],
+        spectrograms["x"][start_frame:end, :n_freq_bins],
+        spectrograms["y"][start_frame:end, :n_freq_bins],
+        spectrograms["z"][start_frame:end, :n_freq_bins],
+        spectrograms["magnitude"][start_frame:end, :n_freq_bins],
     ], axis=0).astype(np.float32)
 
 
@@ -37,12 +39,14 @@ def generate_samples(
     spectrograms: dict[str, np.ndarray],
     n_frames: int = CNN_SAMPLE_FRAMES,
     stride: int = 1,
+    n_freq_bins: int = CNN_FREQ_BINS,
 ) -> np.ndarray:
     """
     滑动窗口生成所有 CNN 样本。
     spectrograms: {"x": (n_total, 512), "y": ..., "z": ..., "magnitude": ...}
     stride: 帧步长 (1 = 逐帧滑动)
-    返回: shape=(N, 4, n_frames, 512), float32
+    n_freq_bins: 保留的频率 bin 数 (默认 CNN_FREQ_BINS=128)
+    返回: shape=(N, 4, n_frames, n_freq_bins), float32
     """
     n_total = spectrograms["x"].shape[0]
     if n_total < n_frames:
@@ -50,13 +54,15 @@ def generate_samples(
 
     starts = list(range(0, n_total - n_frames + 1, stride))
     n_samples = len(starts)
-    samples = np.empty((n_samples, NUM_CHANNELS, n_frames, SP_FREQ_BINS), dtype=np.float32)
+    samples = np.empty((n_samples, NUM_CHANNELS, n_frames, n_freq_bins), dtype=np.float32)
 
     for i, s in enumerate(starts):
-        samples[i] = extract_sample(spectrograms, s, n_frames)
+        samples[i] = extract_sample(spectrograms, s, n_frames, n_freq_bins)
 
     print(f"生成样本: {n_samples} 个, shape={samples.shape}, "
           f"dtype={samples.dtype}, range=[{samples.min():.1f}, {samples.max():.1f}]")
+    print(f"频率裁剪: {SP_FREQ_BINS} → {n_freq_bins} bin "
+          f"(0-{n_freq_bins * SP_FREQ_RES:.0f} Hz)")
     return samples
 
 

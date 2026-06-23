@@ -74,8 +74,17 @@ python -m src.data.process --viewer --data data/imu_test.csv
 # 静态 FFT 分析图
 python -m src.data.process --static --data data/imu_test.csv
 
-# 训练 CNN 模型
+# 训练 CNN 模型 (按文件划分, 消除滑动窗口数据泄漏)
 python -m src.cnn.train
+
+# 使用 Focal Loss (对类别不平衡更鲁棒)
+python -m src.cnn.train --focal-loss
+
+# 手动指定验证文件 (覆盖自动划分)
+python -m src.cnn.train --val-files output/file_a.npz output/file_b.npz
+
+# 自定义参数
+python -m src.cnn.train --epochs 200 --batch-size 32
 
 # 推理 (用训练好的模型预测新数据)
 python -m src.cnn.predict --data data/imu_new.csv
@@ -105,11 +114,14 @@ python tcp_receiver.py --duration 10 -o data/imu_test.csv
         → save_samples()        保存到 output/*.npz
 
 训练: output/*_samples.npz
-        → load_npz()            加载 + 转置 (N,4,16,512)→(N,16,512,4)
-        → normalize()           逐通道标准化 (减均值/除std)
-        → train_val_split()     分层抽样 80%/20%
-        → model.fit()           CNN 训练, EarlyStopping + ModelCheckpoint
+        → load_npz()            逐文件加载 (保留文件边界)
+        → train_val_split_by_file()  按采集文件划分 train/val (消除滑动窗口数据泄漏)
+        → normalize()           stats 仅从训练集计算, 验证集复用 (杜绝数据泄漏)
+        → model.fit()           CNN 训练, class_weight + EarlyStopping + ModelCheckpoint
+        → classification_report 输出 precision/recall/f1 (不依赖 sklearn)
         → 保存 models/best.keras + meta.json
+
+        单文件时自动回退: train_val_split() 逐样本分层划分
 
 导出: models/best.keras
         → model.onnx            ONNX 通用格式 (45.9KB)
@@ -147,4 +159,5 @@ python tcp_receiver.py --duration 10 -o data/imu_test.csv
 | CNN stride | 1 帧 (0.038s) | 相邻样本中心间距 |
 | 输入通道 | 4 (X/Y/Z/magnitude) | 三轴加速度 + 合加速度 sqrt(x²+y²+z²) |
 | 类别 | idle/normal/loose/imbalance | 4 分类 |
-| 模型参数 | 35,990 (140KB) | 残差+SE注意力, v2 默认 |
+| 频率 bin | 128 (0-833 Hz) | CNN 实际使用的频段，裁剪掉 >833Hz 噪声 |
+| 模型参数 | 35,990 (140KB) | 残差+SE注意力+SpatialDropout, v2 默认 |

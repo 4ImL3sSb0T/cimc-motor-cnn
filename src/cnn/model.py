@@ -28,7 +28,41 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-from src.config import CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CLASSES, NUM_CHANNELS
+from src.config import CNN_SAMPLE_FRAMES, CNN_FREQ_BINS, NUM_CLASSES, NUM_CHANNELS
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 损失函数: Focal Loss
+# ═══════════════════════════════════════════════════════════════════════════
+
+def focal_loss(gamma: float = 2.0, alpha: float = 1.0):
+    """
+    Focal Loss — 解决类别不平衡的损失函数。
+
+    标准交叉熵对所有样本一视同仁，但数据集中某些类别样本多 (如 idle)，
+    某些类别样本少 (如 imbalance)。模型容易偏向多数类。
+
+    Focal Loss 给"容易分类"的样本降低权重，让模型更关注"难分类"的样本:
+      FL = -alpha * (1 - p_t)^gamma * log(p_t)
+
+    其中 p_t 是模型对真实类别的预测概率:
+      - p_t 高 (模型很确定) → (1-p_t)^gamma 小 → loss 贡献小
+      - p_t 低 (模型不确定) → (1-p_t)^gamma 大 → loss 贡献大
+
+    Args:
+        gamma: 聚焦参数 (默认 2.0)。越大，对难样本的关注越强
+        alpha: 平衡因子 (默认 1.0)。可与 class_weight 配合使用
+
+    Returns:
+        损失函数，可直接传给 model.compile(loss=...)
+    """
+    def loss(y_true, y_pred):
+        y_pred = tf.clip_by_value(y_pred, 1e-7, 1.0 - 1e-7)
+        y_true_onehot = tf.one_hot(tf.cast(y_true, tf.int32), depth=tf.shape(y_pred)[-1])
+        p_t = tf.reduce_sum(y_true_onehot * y_pred, axis=-1)
+        fl = -alpha * tf.pow(1.0 - p_t, gamma) * tf.math.log(p_t)
+        return tf.reduce_mean(fl)
+    return loss
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -75,12 +109,13 @@ def _residual_block(
     pool_size: int | tuple | None = None,
     use_se: bool = True,
     se_reduction: int = 4,
+    spatial_dropout: float = 0.0,
     name: str | None = None,
 ):
     """
     带残差连接的卷积块 (类似 MobileNetV2 风格)。
 
-    主路径: SepConv2D → BN → ReLU → [SE] → [MaxPool]
+    主路径: SepConv2D → BN → ReLU → [SpatialDropout] → [SE] → [MaxPool]
     短路:   Conv2D(1×1) → BN → [MaxPool]     (通道数不匹配时做投影)
 
     Add + ReLU 结束。
@@ -89,6 +124,10 @@ def _residual_block(
     残差给梯度一条"高速公路"，即使某个 separable conv 学不到有用特征，
     shortcut 也能把信息直送深层，防止训练退化。
 
+    SpatialDropout2D: 随机丢弃整个特征图 (而非单个像素)。
+    对于 CNN 来说，普通 dropout 只丢弃单个像素效果有限，
+    因为相邻像素高度相关。SpatialDropout 强迫模型不依赖某几个特定通道。
+
     Args:
         x: 输入张量 [H, W, Cin]
         filters: 输出通道数
@@ -96,6 +135,7 @@ def _residual_block(
         pool_size: 池化核大小 (None=不池化)
         use_se: 是否加 SE 注意力
         se_reduction: SE 压缩比
+        spatial_dropout: SpatialDropout2D 比率 (0=不使用)
         name: 层名前缀
     """
     prefix = f"{name}_" if name else ""
@@ -113,6 +153,12 @@ def _residual_block(
     )(x)
     main = layers.BatchNormalization(name=f"{prefix}bn")(main)
     main = layers.ReLU(name=f"{prefix}relu")(main)
+
+    # SpatialDropout2D: 随机丢弃整个特征图 (Block 2, 3 使用)
+    if spatial_dropout > 0:
+        main = layers.SpatialDropout2D(
+            spatial_dropout, name=f"{prefix}spatial_drop",
+        )(main)
 
     # SE 通道注意力 (Block 2, 3 使用; Block 4 不用)
     if use_se:
@@ -152,35 +198,35 @@ def _residual_block(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def build_model(
-    input_shape: tuple = (CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CHANNELS),
+    input_shape: tuple = (CNN_SAMPLE_FRAMES, CNN_FREQ_BINS, NUM_CHANNELS),
     num_classes: int = NUM_CLASSES,
 ) -> keras.Model:
     """
-    构建 CNN 模型 (v2: 残差 + SE 注意力 + 温和频率压缩)。
+    构建 CNN 模型 (v2: 残差 + SE 注意力 + 频率裁剪 + SpatialDropout)。
 
     架构概述:
 
-        Input [16, 512, 4]
+        Input [16, 128, 4]
           │
           ▼
         ┌─────────────────────────────────────────────────────┐
         │ Block 1: Conv2D(20, 1×7) + MaxPool(3,2)             │
         │   频率方向大 kernel (1×7 ~46Hz) 提取宽谱谐波结构      │
-        │   [16, 512, 4] → [6, 256, 20]                        │
-        │   频率: 512→256 (÷2)  时间: 16→6 (÷3)                │
+        │   [16, 128, 4] → [6, 64, 20]                         │
+        │   频率: 128→64 (÷2)  时间: 16→6 (÷3)                │
         ├─────────────────────────────────────────────────────┤
-        │ Block 2: SepConv(40) + SE + MaxPool(2,2) [+残差]     │
-        │   [6, 256, 20] → [3, 128, 40]                        │
-        │   频率: 256→128 (÷2)  时间: 6→3 (÷2)                 │
+        │ Block 2: SepConv(40) + SpDrop(0.1) + SE + Pool(2,2)  │
+        │   [6, 64, 20] → [3, 32, 40]                          │
+        │   频率: 64→32 (÷2)  时间: 6→3 (÷2)                  │
         ├─────────────────────────────────────────────────────┤
-        │ Block 3: SepConv(80) + SE + MaxPool(2,2) [+残差]     │
-        │   [3, 128, 40] → [2, 64, 80]                         │
-        │   频率: 128→64 (÷2)  时间: 3→2 (÷2)                  │
+        │ Block 3: SepConv(80) + SpDrop(0.1) + SE + Pool(2,2)  │
+        │   [3, 32, 40] → [2, 16, 80]                          │
+        │   频率: 32→16 (÷2)  时间: 3→2 (÷2)                  │
         ├─────────────────────────────────────────────────────┤
         │ Block 4: SepConv(96) [+残差]   (无池化, 无 SE)       │
-        │   [2, 64, 80] → [2, 64, 96]                          │
+        │   [2, 16, 80] → [2, 16, 96]                          │
         ├─────────────────────────────────────────────────────┤
-        │ GAP → [96] → Drop(0.1) → Dense(48) → Drop(0.15)     │
+        │ GAP → [96] → Drop(0.25) → Dense(48) → Drop(0.3)     │
         │ → Dense(num_classes, softmax)                        │
         └─────────────────────────────────────────────────────┘
           │
@@ -188,14 +234,16 @@ def build_model(
         输出 [num_classes] — 每个类别的概率
 
     关键改进 (vs v1):
-      - 频率分辨率: 最终 64 bin (52 Hz/bin) vs 旧版 8 bin (417 Hz/bin)
+      - 频率裁剪: 128 bin (0-833 Hz) 代替 512 bin，减少 75% 计算量
+      - 频率分辨率: 最终 16 bin (52 Hz/bin) vs 旧版 8 bin (417 Hz/bin)
       - SE 注意力: Block 2/3 后自适应强调重要频率通道
       - 残差连接: 每个 SeparableConv 块有 shortcut，改善梯度流
+      - SpatialDropout2D: Block 2/3 后随机丢弃整个特征图，防止过拟合
       - 1×7 首层 kernel: 沿频率方向提取宽谱谐波特征
       - 通道数增长: 20→40→80→96，更丰富的特征表示
 
     Args:
-        input_shape: (frames, freq_bins, channels)，默认 (16, 512, 3)
+        input_shape: (frames, freq_bins, channels)，默认 (16, 128, 4)
         num_classes: 分类类别数
 
     Returns:
@@ -224,25 +272,25 @@ def build_model(
     x = layers.BatchNormalization(name="b1_bn")(x)
     x = layers.ReLU(name="b1_relu")(x)
     x = layers.MaxPool2D(pool_size=(3, 2), name="b1_pool")(x)
-    # → [6, 256, 20]
+    # → [6, 64, 20]
 
     # ═══════════════════════════════════════════════════════════════
-    # Block 2: 残差块 + SE 注意力
+    # Block 2: 残差块 + SpatialDropout + SE 注意力
     # ═══════════════════════════════════════════════════════════════
     x = _residual_block(
         x, filters=40, kernel_size=3, pool_size=(2, 2),
-        use_se=True, se_reduction=4, name="b2",
+        use_se=True, se_reduction=4, spatial_dropout=0.1, name="b2",
     )
-    # → [3, 128, 40]
+    # → [3, 32, 40]
 
     # ═══════════════════════════════════════════════════════════════
-    # Block 3: 残差块 + SE 注意力
+    # Block 3: 残差块 + SpatialDropout + SE 注意力
     # ═══════════════════════════════════════════════════════════════
     x = _residual_block(
         x, filters=80, kernel_size=3, pool_size=(2, 2),
-        use_se=True, se_reduction=4, name="b3",
+        use_se=True, se_reduction=4, spatial_dropout=0.1, name="b3",
     )
-    # → [2, 64, 80]
+    # → [2, 16, 80]
 
     # ═══════════════════════════════════════════════════════════════
     # Block 4: 残差块 (无池化, 无 SE — 保持空间结构原样送 GAP)
@@ -251,16 +299,16 @@ def build_model(
         x, filters=96, kernel_size=3, pool_size=None,
         use_se=False, name="b4",
     )
-    # → [2, 64, 96]
+    # → [2, 16, 96]
 
     # ═══════════════════════════════════════════════════════════════
     # 分类头
     # ═══════════════════════════════════════════════════════════════
-    # GlobalAveragePooling: 每个通道的 2×64 特征图 → 1 个数字
+    # GlobalAveragePooling: 每个通道的 2×16 特征图 → 1 个数字
     x = layers.GlobalAveragePooling2D(name="gap")(x)
     # → [96]
 
-    x = layers.Dropout(0.1, name="drop1")(x)
+    x = layers.Dropout(0.25, name="drop1")(x)
     x = layers.Dense(
         48, activation="relu",
         kernel_initializer="he_normal",
@@ -268,7 +316,7 @@ def build_model(
     )(x)
     # → [48]
 
-    x = layers.Dropout(0.15, name="drop2")(x)
+    x = layers.Dropout(0.3, name="drop2")(x)
     outputs = layers.Dense(
         num_classes, activation="softmax",
         name="class_prob",
@@ -283,7 +331,7 @@ def build_model(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def build_model_v1(
-    input_shape: tuple = (CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CHANNELS),
+    input_shape: tuple = (CNN_SAMPLE_FRAMES, CNN_FREQ_BINS, NUM_CHANNELS),
     num_classes: int = NUM_CLASSES,
 ) -> keras.Model:
     """
@@ -341,20 +389,30 @@ def build_model_v1(
 # 模型编译
 # ═══════════════════════════════════════════════════════════════════════════
 
-def compile_model(model: keras.Model, learning_rate: float = 1e-3) -> keras.Model:
+def compile_model(
+    model: keras.Model,
+    learning_rate: float = 1e-3,
+    use_focal_loss: bool = False,
+) -> keras.Model:
     """
     编译模型 — 配置优化器、损失函数、评估指标。
 
     Args:
         model: 未编译的 Keras 模型
         learning_rate: 学习率 (默认 0.001)
+        use_focal_loss: 是否使用 Focal Loss (默认 False，使用标准交叉熵)
+            Focal Loss 对类别不平衡更鲁棒，但训练初期可能不稳定
 
     Returns:
         编译好的模型
     """
+    loss_fn = focal_loss(gamma=2.0) if use_focal_loss else "sparse_categorical_crossentropy"
+    loss_name = "focal_loss" if use_focal_loss else "sparse_categorical_crossentropy"
+    print(f"损失函数: {loss_name}")
+
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
-        loss="sparse_categorical_crossentropy",
+        loss=loss_fn,
         metrics=["accuracy"],
     )
     return model

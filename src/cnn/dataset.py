@@ -21,7 +21,7 @@ from pathlib import Path
 
 from src.config import (
     BATCH_SIZE, VALIDATION_SPLIT, CNN_SAMPLE_FRAMES, SP_FREQ_BINS,
-    NUM_CHANNELS,
+    CNN_FREQ_BINS, NUM_CHANNELS,
 )
 
 
@@ -65,6 +65,11 @@ def load_npz(npz_path: str | Path) -> tuple[np.ndarray, np.ndarray | None]:
     # 同时确保数据类型是 float32 (TensorFlow 的默认类型)
     samples = np.transpose(samples, (0, 2, 3, 1)).astype(np.float32)
 
+    # 向后兼容: 旧版 .npz 存储 512 bin，裁剪到 CNN_FREQ_BINS
+    if samples.shape[2] > CNN_FREQ_BINS:
+        print(f"频率裁剪: {samples.shape[2]} → {CNN_FREQ_BINS} bin (向后兼容)")
+        samples = samples[:, :, :CNN_FREQ_BINS, :]
+
     # 尝试读取标签 (可能没有)
     labels = None
     if "labels" in data:
@@ -74,52 +79,41 @@ def load_npz(npz_path: str | Path) -> tuple[np.ndarray, np.ndarray | None]:
     return samples, labels
 
 
-def normalize(samples: np.ndarray) -> tuple[np.ndarray, dict]:
+def normalize(samples: np.ndarray, stats: dict | None = None) -> tuple[np.ndarray, dict]:
     """
     标准化 (Standardization): 让数据分布更规整，加速模型训练。
 
-    === 为什么需要标准化? ===
-    原始数据范围大约是 [-78, 66]，分布不均匀。
-    如果不标准化:
-      - 模型训练会很慢 (梯度不稳定)
-      - 容易出现数值问题
-
     标准化公式: normalized = (x - mean) / std
-    标准化后: 数据均值≈0，标准差≈1，分布更集中
 
     === 逐通道标准化 ===
     X/Y/Z/magnitude 四通道的数值范围可能不同 (比如 X 轴均值=8.6，Y 轴均值=4.1)
     所以每个通道单独计算 mean 和 std
 
+    === 按文件划分时 ===
+    如果传入 stats=None: 从 samples 计算 mean/std (用于训练集)
+    如果传入 stats:   直接用传入的 mean/std (用于验证集/推理，防止数据泄漏)
+
     Args:
-        samples: shape=(N, 16, 512, 4)
+        samples: shape=(N, H, W, C)
+        stats: 预计算的归一化参数 {"mean": [...], "std": [...]}，None 则自动计算
 
     Returns:
         (normalized, stats):
           - normalized: 标准化后的样本, shape 相同
-          - stats: {"mean": [x,y,z,m], "std": [x,y,z,m]} — 归一化参数
-                   推理时需要用同样的参数来标准化新数据
+          - stats: 归一化参数
     """
-    # 计算每个通道的均值和标准差
-    # axis=(0,1,2) 表示在 N、帧、频率 三个维度上求统计量
-    # keepdims=True 保持维度为 (1,1,1,4)，方便后面广播运算
-    #
-    # 例子: 假设 X 通道所有样本所有帧所有频率的值求平均 = 8.6
-    #       mean 的 shape 是 (1,1,1,4)，值类似 [[[[8.6, 4.1, 2.2, 9.1]]]]
-    mean = samples.mean(axis=(0, 1, 2), keepdims=True)  # shape: (1,1,1,4)
-    std = samples.std(axis=(0, 1, 2), keepdims=True)    # shape: (1,1,1,4)
+    if stats is None:
+        mean = samples.mean(axis=(0, 1, 2), keepdims=True)
+        std = samples.std(axis=(0, 1, 2), keepdims=True)
+        std = np.where(std < 1e-6, 1.0, std)
+        stats = {"mean": mean.squeeze().tolist(), "std": std.squeeze().tolist()}
+        print(f"归一化 (从训练集计算): mean={stats['mean']}, std={stats['std']}")
+    else:
+        n_ch = samples.shape[-1]
+        mean = np.array(stats["mean"], dtype=np.float32).reshape(1, 1, 1, n_ch)
+        std = np.array(stats["std"], dtype=np.float32).reshape(1, 1, 1, n_ch)
 
-    # 防止除零: 如果某个通道的标准差太小 (<1e-6)，就设为 1.0
-    # 否则 (x - mean) / 0.0000001 会产生巨大的数字
-    std = np.where(std < 1e-6, 1.0, std)
-
-    # 标准化: 每个值减去通道均值，再除以通道标准差
-    # NumPy 广播: (N,16,512,4) - (1,1,1,4) → 每个通道减自己的均值
     normalized = (samples - mean) / std
-
-    # 保存归一化参数，推理时需要用同样的 mean/std
-    stats = {"mean": mean.squeeze().tolist(), "std": std.squeeze().tolist()}
-    print(f"归一化: mean={stats['mean']}, std={stats['std']}")
     return normalized, stats
 
 
@@ -238,7 +232,7 @@ def _augment(sample: tf.Tensor, label: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]
     # 和时间轴偏移同理，在频率方向两端各补 16 bin，然后随机裁剪
     sample = tf.pad(sample, [[0, 0], [16, 16], [0, 0]], mode="REFLECT")
     offset_f = tf.random.uniform([], 0, 32, dtype=tf.int32)
-    sample = sample[:, offset_f:offset_f + SP_FREQ_BINS]
+    sample = sample[:, offset_f:offset_f + CNN_FREQ_BINS]
 
     # ── 增强 3: 加高斯噪声 ──────────────────────────────────────────
     # 生成和 sample 同形状的随机噪声，标准差=0.1
@@ -253,10 +247,10 @@ def _augment(sample: tf.Tensor, label: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]
     # 随机决定遮蔽长度 (2, 3, 4 中选一个)
     mask_len = tf.random.uniform([], 2, 5, dtype=tf.int32)
     # 随机决定遮蔽起始位置
-    mask_start = tf.random.uniform([], 0, SP_FREQ_BINS - 4, dtype=tf.int32)
+    mask_start = tf.random.uniform([], 0, CNN_FREQ_BINS - 4, dtype=tf.int32)
 
-    # 创建全 1 的遮蔽矩阵 (16帧 × 512频率 × 4通道)
-    mask = tf.ones((CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CHANNELS))
+    # 创建全 1 的遮蔽矩阵 (16帧 × CNN_FREQ_BINS频率 × 4通道)
+    mask = tf.ones((CNN_SAMPLE_FRAMES, CNN_FREQ_BINS, NUM_CHANNELS))
     # 创建遮蔽区域 (全 0)
     mask_update = tf.zeros((CNN_SAMPLE_FRAMES, mask_len, NUM_CHANNELS))
 
@@ -346,3 +340,203 @@ def train_val_split(
 
     print(f"训练集: {len(x_train)}  验证集: {len(x_val)}")
     return x_train, x_val, y_train, y_val
+
+
+def train_val_split_by_file(
+    file_data: list[tuple[np.ndarray, np.ndarray, str]],
+    val_ratio: float = VALIDATION_SPLIT,
+    seed: int = 42,
+) -> tuple[list, list]:
+    """
+    按采集文件划分训练集和验证集 — 消除滑动窗口带来的数据泄漏。
+
+    === 为什么按文件划分? ===
+    当前数据: 7 个独立的采集文件，每个文件只含 1-2 个类别的工况。
+    滑动窗口 stride=1 (75% 重叠) 导致相邻窗口几乎一模一样。
+    如果随机切窗口 → 同一工况的窗口分散到 train/val → 验证指标虚高。
+
+    按文件划分 = 每个采集文件作为一个整体归入 train 或 val，
+    相邻窗口不会被拆分 → 验证集真正测试"未见过的工况"。
+
+    === 划分策略 ===
+    1. 确保 train/val 都覆盖所有存在的类别
+    2. 每个类别: 最大文件 → train，最小文件 → val
+    3. 剩余文件: 按大小分配到 train/val，使比例接近 val_ratio
+
+    Args:
+        file_data: [(samples, labels, filename), ...] — 每个元素是一个文件
+        val_ratio: 验证集目标比例 (默认 0.2)
+        seed: 随机种子 (固定保证可复现)
+
+    Returns:
+        (train_data, val_data): 各自的文件列表，格式同 file_data
+    """
+    rng = np.random.RandomState(seed)
+    file_indices = rng.permutation(len(file_data))
+    file_data_shuffled = [file_data[i] for i in file_indices]
+
+    all_classes = set()
+    for _, labels, _ in file_data_shuffled:
+        all_classes.update(np.unique(labels))
+    all_classes = sorted(all_classes)
+
+    train_files: set[int] = set()
+    val_files: set[int] = set()
+
+    for cls in all_classes:
+        candidates = [
+            (i, d) for i, d in enumerate(file_data_shuffled)
+            if cls in np.unique(d[1])
+        ]
+        candidates.sort(key=lambda x: len(x[1][0]), reverse=True)
+
+        train_covered = any(
+            cls in np.unique(file_data_shuffled[t][1]) for t in train_files
+        )
+        val_covered = any(
+            cls in np.unique(file_data_shuffled[v][1]) for v in val_files
+        )
+
+        if train_covered and val_covered:
+            continue
+
+        unassigned = [
+            c for c in candidates
+            if c[0] not in train_files and c[0] not in val_files
+        ]
+
+        if not train_covered and unassigned:
+            train_files.add(unassigned[0][0])
+            unassigned = [c for c in unassigned if c[0] != unassigned[0][0]]
+
+        if not val_covered and unassigned:
+            val_files.add(unassigned[-1][0])
+
+    remaining = set(range(len(file_data_shuffled))) - train_files - val_files
+    remaining_sorted = sorted(
+        remaining, key=lambda i: len(file_data_shuffled[i][0]), reverse=True,
+    )
+
+    total_samples = sum(len(d[0]) for d in file_data_shuffled)
+    val_target = int(total_samples * val_ratio)
+
+    for idx in remaining_sorted:
+        current_val = sum(len(file_data_shuffled[v][0]) for v in val_files)
+        if current_val + len(file_data_shuffled[idx][0]) <= val_target * 1.3:
+            val_files.add(idx)
+        else:
+            train_files.add(idx)
+
+    train_data = [file_data_shuffled[i] for i in sorted(train_files)]
+    val_data = [file_data_shuffled[i] for i in sorted(val_files)]
+
+    n_train = sum(len(d[0]) for d in train_data)
+    n_val = sum(len(d[0]) for d in val_data)
+    print(f"\n按文件划分:")
+    print(f"  Train ({n_train} 样本, {100*n_train/total_samples:.1f}%):")
+    for _, _, fname in train_data:
+        print(f"    {fname}")
+    print(f"  Val   ({n_val} 样本, {100*n_val/total_samples:.1f}%):")
+    for _, _, fname in val_data:
+        print(f"    {fname}")
+
+    return train_data, val_data
+
+
+def classification_report_from_cm(
+    cm: np.ndarray,
+    class_names: list[str],
+) -> str:
+    """
+    从混淆矩阵计算分类报告 — precision, recall, f1-score。
+
+    不依赖 sklearn，直接基于混淆矩阵手算。
+
+    Args:
+        cm: 混淆矩阵, shape=(n_classes, n_classes)
+        class_names: 类别名称列表
+
+    Returns:
+        格式化的分类报告字符串
+    """
+    n_classes = len(class_names)
+    lines = []
+    lines.append("")
+    lines.append(f"{'':>12}  precision  recall    f1-score  support")
+    lines.append("-" * 58)
+
+    for i in range(n_classes):
+        tp = cm[i, i]
+        fp = cm[:, i].sum() - tp
+        fn = cm[i, :].sum() - tp
+        support = cm[i, :].sum()
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = (2 * precision * recall / (precision + recall)
+              if (precision + recall) > 0 else 0.0)
+
+        lines.append(
+            f"{class_names[i]:>12}  {precision:.4f}    {recall:.4f}    "
+            f"{f1:.4f}    {support}"
+        )
+
+    # Weighted average
+    total = cm.sum()
+    if total > 0:
+        w_prec = sum(
+            (cm[i, i] / (cm[:, i].sum()) if cm[:, i].sum() > 0 else 0)
+            * (cm[i, :].sum()) for i in range(n_classes)
+        ) / total
+        w_rec = sum(cm[i, i] for i in range(n_classes)) / total
+        w_f1 = (2 * w_prec * w_rec / (w_prec + w_rec)
+                if (w_prec + w_rec) > 0 else 0)
+    else:
+        w_prec = w_rec = w_f1 = 0.0
+
+    lines.append("-" * 58)
+    lines.append(
+        f"{'weighted avg':>12}  {w_prec:.4f}    {w_rec:.4f}    "
+        f"{w_f1:.4f}    {total}"
+    )
+
+    report = "\n".join(lines)
+    print(report)
+    return report
+
+
+def compute_class_weights(
+    labels: np.ndarray,
+    num_classes: int,
+) -> dict[int, float]:
+    """
+    计算类别权重 — 解决类别不平衡问题。
+
+    使用 "inverse frequency" 方法:
+      weight_c = n_samples / (n_classes * n_samples_c)
+
+    效果: 样本少的类别权重高，样本多的类别权重低。
+    例如 idle 有 200 个样本，loose 只有 30 个:
+      weight_idle = 332 / (4 * 200) = 0.415
+      weight_loose = 332 / (4 * 30) = 2.767
+
+    训练时 loss 会乘以类别权重，让模型更关注少数类。
+
+    Args:
+        labels: shape=(N,) — 训练集标签
+        num_classes: 类别总数
+
+    Returns:
+        {class_idx: weight} 字典，可直接传给 model.fit(class_weight=...)
+    """
+    n_samples = len(labels)
+    weights = {}
+    for c in range(num_classes):
+        count = (labels == c).sum()
+        if count > 0:
+            weights[c] = n_samples / (num_classes * count)
+        else:
+            weights[c] = 1.0
+
+    print(f"类别权重: {', '.join(f'{k}={v:.2f}' for k, v in weights.items())}")
+    return weights
