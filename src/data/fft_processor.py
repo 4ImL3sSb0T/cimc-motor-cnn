@@ -61,16 +61,42 @@ def sliding_window_fft(
     return times, spectrogram
 
 
+def compute_magnitude(
+    ax: np.ndarray, ay: np.ndarray, az: np.ndarray
+) -> np.ndarray:
+    """
+    计算三轴合加速度 magnitude = sqrt(x² + y² + z²)。
+    在时域上计算，之后再做 FFT，能捕捉三轴间的相位关系。
+
+    Args:
+        ax, ay, az: 去直流偏移后的三轴加速度信号
+
+    Returns:
+        magnitude: 合加速度信号, float32
+    """
+    return np.sqrt(ax**2 + ay**2 + az**2).astype(np.float32)
+
+
 def process_3axis(
     ax: np.ndarray, ay: np.ndarray, az: np.ndarray
 ) -> dict:
     """
-    处理 3 轴加速度, 返回完整结果字典:
+    处理 3 轴加速度 (兼容旧接口，内部调用 process_4axis 取前三通道)。
+    """
+    return process_4axis(ax, ay, az)
+
+
+def process_4axis(
+    ax: np.ndarray, ay: np.ndarray, az: np.ndarray
+) -> dict:
+    """
+    处理 4 通道加速度 (X/Y/Z + magnitude), 返回完整结果字典:
       {
         "hann": ndarray,
         "x": (times, spectrogram),
         "y": (times, spectrogram),
         "z": (times, spectrogram),
+        "magnitude": (times, spectrogram),
         "freqs": ndarray,
         "sample_rate": float,
         "n_samples": int,
@@ -80,6 +106,9 @@ def process_3axis(
     print(f"FFT 参数: size={SP_FFT_SIZE}, hop={SP_HOP_SIZE}, "
           f"bins={SP_FREQ_BINS}, df={SP_FREQ_RES:.2f}Hz")
 
+    # 计算时域 magnitude
+    am = compute_magnitude(ax, ay, az)
+
     result = {
         "hann": hann,
         "freqs": np.arange(SP_FREQ_BINS) * SP_FREQ_RES,
@@ -87,8 +116,8 @@ def process_3axis(
         "n_samples": len(ax),
     }
 
-    for label, sig in [("x", ax), ("y", ay), ("z", az)]:
-        print(f"  处理 {label.upper()} 轴 ({len(sig)} 采样)...")
+    for label, sig in [("x", ax), ("y", ay), ("z", az), ("magnitude", am)]:
+        print(f"  处理 {label.upper()} ({len(sig)} 采样)...")
         result[label] = sliding_window_fft(sig, hann)
 
     return result

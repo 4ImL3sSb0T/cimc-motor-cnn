@@ -1,6 +1,7 @@
 """
 从 FFT 频谱图生成 CNN 训练样本
-输出形状: (3, n_frames, freq_bins) 即 (channels, frames, freq_bins)
+输出形状: (4, n_frames, freq_bins) 即 (channels, frames, freq_bins)
+通道: X/Y/Z + magnitude (sqrt(x²+y²+z²))
 """
 
 import json
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from src.config import (
     CNN_SAMPLE_FRAMES, SP_FREQ_BINS, SP_HOP_SIZE, SP_SAMPLE_RATE,
-    SP_FFT_SIZE, CLASS_NAMES,
+    SP_FFT_SIZE, CLASS_NAMES, NUM_CHANNELS,
 )
 
 
@@ -19,15 +20,16 @@ def extract_sample(
     n_frames: int = CNN_SAMPLE_FRAMES,
 ) -> np.ndarray:
     """
-    从 3 轴频谱图中提取一个 CNN 样本。
-    spectrograms: {"x": (n_total, 512), "y": ..., "z": ...}
-    返回: shape=(3, n_frames, 512), float32
+    从 4 通道频谱图中提取一个 CNN 样本。
+    spectrograms: {"x": (n_total, 512), "y": ..., "z": ..., "magnitude": ...}
+    返回: shape=(4, n_frames, 512), float32
     """
     end = start_frame + n_frames
     return np.stack([
         spectrograms["x"][start_frame:end],
         spectrograms["y"][start_frame:end],
         spectrograms["z"][start_frame:end],
+        spectrograms["magnitude"][start_frame:end],
     ], axis=0).astype(np.float32)
 
 
@@ -38,9 +40,9 @@ def generate_samples(
 ) -> np.ndarray:
     """
     滑动窗口生成所有 CNN 样本。
-    spectrograms: {"x": (n_total, 512), ...}
+    spectrograms: {"x": (n_total, 512), "y": ..., "z": ..., "magnitude": ...}
     stride: 帧步长 (1 = 逐帧滑动)
-    返回: shape=(N, 3, n_frames, 512), float32
+    返回: shape=(N, 4, n_frames, 512), float32
     """
     n_total = spectrograms["x"].shape[0]
     if n_total < n_frames:
@@ -48,7 +50,7 @@ def generate_samples(
 
     starts = list(range(0, n_total - n_frames + 1, stride))
     n_samples = len(starts)
-    samples = np.empty((n_samples, 3, n_frames, SP_FREQ_BINS), dtype=np.float32)
+    samples = np.empty((n_samples, NUM_CHANNELS, n_frames, SP_FREQ_BINS), dtype=np.float32)
 
     for i, s in enumerate(starts):
         samples[i] = extract_sample(spectrograms, s, n_frames)

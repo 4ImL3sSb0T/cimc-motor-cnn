@@ -3,7 +3,7 @@ CNN 模型定义 — 用于 IMU 振动频谱图分类
 
 === 什么是 CNN? ===
 CNN (Convolutional Neural Network，卷积神经网络) 是一种专门用来识别"图像-like"数据的神经网络。
-我们的频谱图 (16帧 × 512频率bin × 3通道) 就是一种"图像"，所以用 CNN 来分类。
+我们的频谱图 (16帧 × 512频率bin × 4通道) 就是一种"图像"，所以用 CNN 来分类。
 
 === 模型做了什么? ===
 输入一张频谱图 → 经过层层卷积提取特征 → 最终输出每个类别的概率
@@ -12,7 +12,7 @@ CNN (Convolutional Neural Network，卷积神经网络) 是一种专门用来识
       → 所以判断为 "normal"
 
 === 输入输出 ===
-输入: (batch, 16, 512, 3)  — batch张图片, 每张16帧高×512频率宽×3通道(X/Y/Z)
+输入: (batch, 16, 512, 4)  — batch张图片, 每张16帧高×512频率宽×4通道(X/Y/Z/magnitude)
 输出: (batch, num_classes)  — 每张图片对应 num_classes 个类别的概率
 
 === 设计目标 ===
@@ -28,7 +28,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-from src.config import CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CLASSES
+from src.config import CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CLASSES, NUM_CHANNELS
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -152,7 +152,7 @@ def _residual_block(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def build_model(
-    input_shape: tuple = (CNN_SAMPLE_FRAMES, SP_FREQ_BINS, 3),
+    input_shape: tuple = (CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CHANNELS),
     num_classes: int = NUM_CLASSES,
 ) -> keras.Model:
     """
@@ -160,13 +160,13 @@ def build_model(
 
     架构概述:
 
-        Input [16, 512, 3]
+        Input [16, 512, 4]
           │
           ▼
         ┌─────────────────────────────────────────────────────┐
         │ Block 1: Conv2D(20, 1×7) + MaxPool(3,2)             │
         │   频率方向大 kernel (1×7 ~46Hz) 提取宽谱谐波结构      │
-        │   [16, 512, 3] → [6, 256, 20]                        │
+        │   [16, 512, 4] → [6, 256, 20]                        │
         │   频率: 512→256 (÷2)  时间: 16→6 (÷3)                │
         ├─────────────────────────────────────────────────────┤
         │ Block 2: SepConv(40) + SE + MaxPool(2,2) [+残差]     │
@@ -283,7 +283,7 @@ def build_model(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def build_model_v1(
-    input_shape: tuple = (CNN_SAMPLE_FRAMES, SP_FREQ_BINS, 3),
+    input_shape: tuple = (CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CHANNELS),
     num_classes: int = NUM_CLASSES,
 ) -> keras.Model:
     """

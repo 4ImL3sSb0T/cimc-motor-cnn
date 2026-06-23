@@ -87,7 +87,7 @@ def load_multiple_npz(npz_paths: list[str | Path]) -> tuple[np.ndarray, np.ndarr
             print(f"  跳过 {p.name} (无标签)")
             continue
 
-        # 转置: (N, 3, 16, 512) → (N, 16, 512, 3)
+        # 转置: (N, 4, 16, 512) → (N, 16, 512, 4)
         samples = np.transpose(samples, (0, 2, 3, 1)).astype(np.float32)
         labels = labels.astype(np.int32)
 

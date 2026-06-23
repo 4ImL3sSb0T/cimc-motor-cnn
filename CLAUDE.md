@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 IMU 加速度数据的 FFT 频谱分析 + CNN 神经网络分类项目，用于电机振动检测。
-数据流程: xlsx/csv 原始数据 → 去直流偏移 → 滑动窗口 FFT → 频谱图 → CNN 分类 → ONNX 导出
+数据流程: xlsx/csv 原始数据 → 去直流偏移 → 滑动窗口 FFT (4通道: X/Y/Z/magnitude) → 频谱图 → CNN 分类 → ONNX 导出
 
 ## Project Structure
 
@@ -98,13 +98,14 @@ python tcp_receiver.py --duration 10 -o data/imu_test.csv
 处理: data/*.xlsx/csv
         → load_data()           自动识别格式, 提取 3 轴加速度
         → remove_dc_offset()    前 10000 行静态数据算均值, 减去传感器偏置
-        → process_3axis()       滑动窗口 FFT (1024点, hop=256, Hann窗)
+        → process_4axis()       滑动窗口 FFT (1024点, hop=256, Hann窗)
+                                4 通道: X/Y/Z + magnitude(sqrt(x²+y²+z²))
         → generate_samples()    窗口 16 帧提取 CNN 样本
         → generate_labels()     按 JSON 配置映射时间段→类别 (可选)
         → save_samples()        保存到 output/*.npz
 
 训练: output/*_samples.npz
-        → load_npz()            加载 + 转置 (N,3,16,512)→(N,16,512,3)
+        → load_npz()            加载 + 转置 (N,4,16,512)→(N,16,512,4)
         → normalize()           逐通道标准化 (减均值/除std)
         → train_val_split()     分层抽样 80%/20%
         → model.fit()           CNN 训练, EarlyStopping + ModelCheckpoint
@@ -144,5 +145,6 @@ python tcp_receiver.py --duration 10 -o data/imu_test.csv
 | 频率分辨率 | 6.51 Hz/bin | 每个频率 bin 的跨度 |
 | CNN 窗口 | 16 帧 (0.61s) | 每个样本覆盖的时间 |
 | CNN stride | 1 帧 (0.038s) | 相邻样本中心间距 |
+| 输入通道 | 4 (X/Y/Z/magnitude) | 三轴加速度 + 合加速度 sqrt(x²+y²+z²) |
 | 类别 | idle/normal/loose/imbalance | 4 分类 |
-| 模型参数 | 35,850 (140KB) | 残差+SE注意力, v2 默认 |
+| 模型参数 | 35,990 (140KB) | 残差+SE注意力, v2 默认 |

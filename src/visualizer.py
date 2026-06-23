@@ -8,7 +8,7 @@ from pathlib import Path
 
 from src.config import (
     SP_FFT_SIZE, SP_HOP_SIZE, SP_SAMPLE_RATE,
-    SP_FREQ_RES, SP_FREQ_BINS, CNN_SAMPLE_FRAMES,
+    SP_FREQ_RES, SP_FREQ_BINS, CNN_SAMPLE_FRAMES, NUM_CHANNELS,
 )
 
 # 中文字体 — WSL2 下 matplotlib 扫描不到 Windows 字体，手动查找
@@ -49,7 +49,15 @@ if _CN_FONT is None:
 
 
 class CNNSampleViewer:
-    """CNN 样本可视化器 — 滑动窗口，3 通道分开显示"""
+    """CNN 样本可视化器 — 滑动窗口，4 通道分开显示 (X/Y/Z/magnitude)"""
+
+    # 通道配置: key, 标签, 行号
+    _CHANNELS = [
+        ("x", "X axis", 0),
+        ("y", "Y axis", 1),
+        ("z", "Z axis", 2),
+        ("magnitude", "Magnitude", 3),
+    ]
 
     def __init__(self, sample_len: int = CNN_SAMPLE_FRAMES):
         self.sample_len = sample_len
@@ -60,31 +68,31 @@ class CNNSampleViewer:
         self._updating = False
 
     def load_data(self, result: dict):
-        for key in ["x", "y", "z"]:
+        for key, _, _ in self._CHANNELS:
             _, spec = result[key]
             self.specs[key] = spec
         self.n_frames = self.specs["x"].shape[0]
 
     def setup(self):
-        self.fig = plt.figure(figsize=(16, 12))
+        self.fig = plt.figure(figsize=(16, 16))
         gs = self.fig.add_gridspec(
-            4, 4, height_ratios=[1, 2, 2, 2],
+            5, 4, height_ratios=[1, 2, 2, 2, 2],
             hspace=0.45, left=0.06, right=0.93, top=0.93, wspace=0.4,
         )
 
-        self.ax_overview = [self.fig.add_subplot(gs[0, i]) for i in range(3)]
+        self.ax_overview = [self.fig.add_subplot(gs[0, i]) for i in range(4)]
 
         self.ax_ch = []
         self.ax_cb = []
-        for row, (key, label) in enumerate(zip(["x", "y", "z"], ["X", "Y", "Z"])):
+        for row, (key, label, _) in enumerate(self._CHANNELS):
             ax = self.fig.add_subplot(gs[row + 1, 0:3])
             ax_cb = self.fig.add_subplot(gs[row + 1, 3])
             self.ax_ch.append(ax)
             self.ax_cb.append(ax_cb)
-            ax.set_title(f"Ch{row}: {label} axis", fontproperties=_CN_FONT, fontsize=11)
+            ax.set_title(f"Ch{row}: {label}", fontproperties=_CN_FONT, fontsize=11)
 
         self.fig.suptitle(
-            f"CNN Input Sample  |  shape=({3}, {self.sample_len}, {SP_FREQ_BINS})  "
+            f"CNN Input Sample  |  shape=({NUM_CHANNELS}, {self.sample_len}, {SP_FREQ_BINS})  "
             f"FFT={SP_FFT_SIZE}  HOP={SP_HOP_SIZE}  fs={SP_SAMPLE_RATE}Hz  "
             f"frames={self.n_frames}  dB",
             fontsize=11, fontproperties=_CN_FONT,
@@ -112,7 +120,7 @@ class CNNSampleViewer:
 
             freqs = np.arange(SP_FREQ_BINS) * SP_FREQ_RES
 
-            for ax, key in zip(self.ax_overview, ["x", "y", "z"]):
+            for ax, (key, _, _) in zip(self.ax_overview, self._CHANNELS):
                 ax.clear()
                 spec = self.specs[key]
                 times = np.arange(self.n_frames) * (SP_HOP_SIZE / SP_SAMPLE_RATE)
@@ -130,7 +138,7 @@ class CNNSampleViewer:
                 fontproperties=_CN_FONT, fontsize=10,
             )
 
-            for ax, cb_ax, key in zip(self.ax_ch, self.ax_cb, ["x", "y", "z"]):
+            for ax, cb_ax, (key, _, _) in zip(self.ax_ch, self.ax_cb, self._CHANNELS):
                 ax.clear()
                 cb_ax.clear()
                 ch_data = self.specs[key][start:end]
@@ -152,13 +160,11 @@ class CNNSampleViewer:
         self._draw_sample(int(val))
 
     def get_current_sample(self) -> np.ndarray:
-        """返回当前窗口的 CNN 输入: shape=(3, sample_len, FREQ_BINS), float32"""
+        """返回当前窗口的 CNN 输入: shape=(4, sample_len, FREQ_BINS), float32"""
         start = self.current_start
         end = start + self.sample_len
         return np.stack([
-            self.specs["x"][start:end],
-            self.specs["y"][start:end],
-            self.specs["z"][start:end],
+            self.specs[key][start:end] for key, _, _ in self._CHANNELS
         ], axis=0).astype(np.float32)
 
     def show(self):
@@ -171,21 +177,23 @@ def plot_fft_analysis(
     save_path: str | Path | None = None,
 ):
     """
-    绘制完整的 FFT 分析图:
-      行 0: 3 轴时域波形
-      行 1: 3 轴频谱图 (时间-频率 热力图)
+    绘制完整的 FFT 分析图 (4 通道):
+      行 0: 4 通道时域波形 (X/Y/Z/magnitude)
+      行 1: 4 通道频谱图 (时间-频率 热力图)
       行 2: 最后一帧频谱 (全频段)
       行 3: 最后一帧频谱 (0-500Hz 放大)
     """
+    from src.data.fft_processor import compute_magnitude
+
     freqs = result["freqs"]
     sr = result["sample_rate"]
     n_samples = result["n_samples"]
     time_axis = np.arange(n_samples) / sr
 
-    axis_labels = ["X", "Y", "Z"]
-    keys = ["x", "y", "z"]
+    axis_labels = ["X", "Y", "Z", "Magnitude"]
+    keys = ["x", "y", "z", "magnitude"]
 
-    fig, axes = plt.subplots(4, 3, figsize=(18, 14))
+    fig, axes = plt.subplots(4, 4, figsize=(24, 14))
     fig.suptitle(
         f"IMU 加速度 FFT 分析  |  FFT={SP_FFT_SIZE}  HOP={SP_HOP_SIZE}  "
         f"fs={sr}Hz  df={SP_FREQ_RES:.2f}Hz  samples={n_samples}",
@@ -197,7 +205,7 @@ def plot_fft_analysis(
 
         if raw_signals and key in raw_signals:
             axes[0, col].plot(time_axis, raw_signals[key], linewidth=0.3, color="C0")
-        axes[0, col].set_title(f"{label} 轴 时域波形", fontproperties=_CN_FONT)
+        axes[0, col].set_title(f"{label} 时域波形", fontproperties=_CN_FONT)
         axes[0, col].set_xlabel("时间 (s)", fontproperties=_CN_FONT)
         axes[0, col].set_ylabel("加速度 (g)", fontproperties=_CN_FONT)
         axes[0, col].grid(True, alpha=0.3)
@@ -205,7 +213,7 @@ def plot_fft_analysis(
         im = axes[1, col].pcolormesh(
             times, freqs, spec.T, shading="auto", cmap="inferno",
         )
-        axes[1, col].set_title(f"{label} 轴 频谱图", fontproperties=_CN_FONT)
+        axes[1, col].set_title(f"{label} 频谱图", fontproperties=_CN_FONT)
         axes[1, col].set_xlabel("时间 (s)", fontproperties=_CN_FONT)
         axes[1, col].set_ylabel("频率 (Hz)", fontproperties=_CN_FONT)
         axes[1, col].set_ylim(0, sr / 2)
@@ -213,14 +221,14 @@ def plot_fft_analysis(
 
         last_spec = spec[-1]
         axes[2, col].plot(freqs, last_spec, linewidth=0.8, color="C1")
-        axes[2, col].set_title(f"{label} 轴 最后一帧频谱 (全频段)", fontproperties=_CN_FONT)
+        axes[2, col].set_title(f"{label} 最后一帧频谱 (全频段)", fontproperties=_CN_FONT)
         axes[2, col].set_xlabel("频率 (Hz)", fontproperties=_CN_FONT)
         axes[2, col].set_ylabel("幅度", fontproperties=_CN_FONT)
         axes[2, col].grid(True, alpha=0.3)
 
         mask = freqs <= 500
         axes[3, col].plot(freqs[mask], last_spec[mask], linewidth=1.0, color="C2")
-        axes[3, col].set_title(f"{label} 轴 最后一帧频谱 (0-500Hz)", fontproperties=_CN_FONT)
+        axes[3, col].set_title(f"{label} 最后一帧频谱 (0-500Hz)", fontproperties=_CN_FONT)
         axes[3, col].set_xlabel("频率 (Hz)", fontproperties=_CN_FONT)
         axes[3, col].set_ylabel("幅度", fontproperties=_CN_FONT)
         axes[3, col].grid(True, alpha=0.3)

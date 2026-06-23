@@ -54,12 +54,15 @@ SP_FREQ_RES = SP_SAMPLE_RATE / SP_FFT_SIZE  # 6.51 Hz
 # 太少 → 信息不足; 太多 → 计算量大
 CNN_SAMPLE_FRAMES = 16
 
+# 通道数: 4 = X/Y/Z 三轴 + magnitude (sqrt(x²+y²+z²))
+NUM_CHANNELS = 4
+
 # CNN 输入张量的形状: (通道数, 帧数, 频率bin数)
-# 3 通道 = X/Y/Z 三轴加速度
+# 4 通道 = X/Y/Z 三轴加速度 + 三轴合加速度 magnitude
 # 16 帧 = 时间维度
 # 512 = 频率维度
 # 注意: 这是 channels_first 格式，实际送入模型时要转成 channels_last
-CNN_INPUT_SHAPE = (3, CNN_SAMPLE_FRAMES, SP_FREQ_BINS)  # (3, 16, 512)
+CNN_INPUT_SHAPE = (NUM_CHANNELS, CNN_SAMPLE_FRAMES, SP_FREQ_BINS)  # (4, 16, 512)
 
 # ══════════════════════════════════════════════════════════════════════
 # 数据处理参数

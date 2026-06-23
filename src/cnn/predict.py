@@ -26,7 +26,7 @@ from src.config import (
     CLASS_NAMES, CNN_SAMPLE_FRAMES, SP_HOP_SIZE, SP_FFT_SIZE, SP_SAMPLE_RATE,
 )
 from src.data.data_loader import load_data, find_data_file, remove_dc_offset
-from src.data.fft_processor import process_3axis
+from src.data.fft_processor import process_4axis
 from src.data.sample_generator import generate_samples
 
 # 中文字体
@@ -96,23 +96,25 @@ def predict(
     # ── 3. 去直流偏移 ──
     ax, ay, az = remove_dc_offset(ax_raw, ay_raw, az_raw, static_n=DC_OFFSET_SAMPLES)
 
-    # ── 4. FFT 处理 ──
-    result = process_3axis(ax, ay, az)
+    # ── 4. FFT 处理 (4 通道: X/Y/Z + magnitude) ──
+    result = process_4axis(ax, ay, az)
 
     # ── 5. 生成 CNN 样本 ──
     spectrograms = {
         "x": result["x"][1],
         "y": result["y"][1],
         "z": result["z"][1],
+        "magnitude": result["magnitude"][1],
     }
-    samples = generate_samples(spectrograms)  # (N, 3, 16, 512)
+    samples = generate_samples(spectrograms)  # (N, 4, 16, 512)
 
-    # 转置: (N, 3, 16, 512) → (N, 16, 512, 3) channels_last
+    # 转置: (N, 4, 16, 512) → (N, 16, 512, 4) channels_last
     samples = np.transpose(samples, (0, 2, 3, 1)).astype(np.float32)
 
     # ── 6. 归一化 (使用训练时的 mean/std) ──
-    mean = np.array(norm_stats["mean"]).reshape(1, 1, 1, 3)
-    std = np.array(norm_stats["std"]).reshape(1, 1, 1, 3)
+    n_ch = samples.shape[-1]
+    mean = np.array(norm_stats["mean"]).reshape(1, 1, 1, n_ch)
+    std = np.array(norm_stats["std"]).reshape(1, 1, 1, n_ch)
     samples_norm = (samples - mean) / std
 
     # ── 7. 推理 ──

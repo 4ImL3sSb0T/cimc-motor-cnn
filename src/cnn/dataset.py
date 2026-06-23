@@ -21,6 +21,7 @@ from pathlib import Path
 
 from src.config import (
     BATCH_SIZE, VALIDATION_SPLIT, CNN_SAMPLE_FRAMES, SP_FREQ_BINS,
+    NUM_CHANNELS,
 )
 
 
@@ -29,28 +30,28 @@ def load_npz(npz_path: str | Path) -> tuple[np.ndarray, np.ndarray | None]:
     从 .npz 文件加载样本和标签。
 
     .npz 文件是 NumPy 的压缩格式，里面存了:
-      - "samples": CNN 样本数据, shape=(N, 3, 16, 512)
+      - "samples": CNN 样本数据, shape=(N, 4, 16, 512)
       - "labels" (可选): 分类标签, shape=(N,), 值为 0,1,2,3...
 
-    重要: 存储时用的格式是 (N, 3, 16, 512)，即 channels_first
+    重要: 存储时用的格式是 (N, 4, 16, 512)，即 channels_first
           但 TensorFlow/Keras 默认用 channels_last 格式
-          所以加载后需要转置为 (N, 16, 512, 3)
+          所以加载后需要转置为 (N, 16, 512, 4)
 
     Args:
         npz_path: .npz 文件的路径
 
     Returns:
         (samples, labels):
-          - samples: shape=(N, 16, 512, 3), float32 — 转置后的样本
+          - samples: shape=(N, 16, 512, 4), float32 — 转置后的样本
           - labels: shape=(N,), int32 — 标签 (如果没有则返回 None)
 
     === 转置说明 ===
-    存储格式: (N, 3, 16, 512)  →  第1维是通道(X=0, Y=1, Z=2)
-    使用格式: (N, 16, 512, 3)  →  最后一维是通道 (TensorFlow 默认)
+    存储格式: (N, 4, 16, 512)  →  第1维是通道(X=0, Y=1, Z=2, magnitude=3)
+    使用格式: (N, 16, 512, 4)  →  最后一维是通道 (TensorFlow 默认)
 
     np.transpose 的 (0, 2, 3, 1) 含义:
       维度0(N)     → 保持在位置0
-      维度1(3)     → 移到位置3 (最后)
+      维度1(4)     → 移到位置3 (最后)
       维度2(16)    → 移到位置1
       维度3(512)   → 移到位置2
     """
@@ -60,7 +61,7 @@ def load_npz(npz_path: str | Path) -> tuple[np.ndarray, np.ndarray | None]:
     # 取出样本数据
     samples = data["samples"]
 
-    # 转置: (N, 3, 16, 512) → (N, 16, 512, 3)
+    # 转置: (N, 4, 16, 512) → (N, 16, 512, 4)
     # 同时确保数据类型是 float32 (TensorFlow 的默认类型)
     samples = np.transpose(samples, (0, 2, 3, 1)).astype(np.float32)
 
@@ -87,33 +88,33 @@ def normalize(samples: np.ndarray) -> tuple[np.ndarray, dict]:
     标准化后: 数据均值≈0，标准差≈1，分布更集中
 
     === 逐通道标准化 ===
-    X/Y/Z 三轴的数值范围可能不同 (比如 X 轴均值=8.6，Y 轴均值=4.1)
+    X/Y/Z/magnitude 四通道的数值范围可能不同 (比如 X 轴均值=8.6，Y 轴均值=4.1)
     所以每个通道单独计算 mean 和 std
 
     Args:
-        samples: shape=(N, 16, 512, 3)
+        samples: shape=(N, 16, 512, 4)
 
     Returns:
         (normalized, stats):
           - normalized: 标准化后的样本, shape 相同
-          - stats: {"mean": [x,y,z], "std": [x,y,z]} — 归一化参数
+          - stats: {"mean": [x,y,z,m], "std": [x,y,z,m]} — 归一化参数
                    推理时需要用同样的参数来标准化新数据
     """
     # 计算每个通道的均值和标准差
     # axis=(0,1,2) 表示在 N、帧、频率 三个维度上求统计量
-    # keepdims=True 保持维度为 (1,1,1,3)，方便后面广播运算
+    # keepdims=True 保持维度为 (1,1,1,4)，方便后面广播运算
     #
     # 例子: 假设 X 通道所有样本所有帧所有频率的值求平均 = 8.6
-    #       mean 的 shape 是 (1,1,1,3)，值类似 [[[[8.6, 4.1, 2.2]]]]
-    mean = samples.mean(axis=(0, 1, 2), keepdims=True)  # shape: (1,1,1,3)
-    std = samples.std(axis=(0, 1, 2), keepdims=True)    # shape: (1,1,1,3)
+    #       mean 的 shape 是 (1,1,1,4)，值类似 [[[[8.6, 4.1, 2.2, 9.1]]]]
+    mean = samples.mean(axis=(0, 1, 2), keepdims=True)  # shape: (1,1,1,4)
+    std = samples.std(axis=(0, 1, 2), keepdims=True)    # shape: (1,1,1,4)
 
     # 防止除零: 如果某个通道的标准差太小 (<1e-6)，就设为 1.0
     # 否则 (x - mean) / 0.0000001 会产生巨大的数字
     std = np.where(std < 1e-6, 1.0, std)
 
     # 标准化: 每个值减去通道均值，再除以通道标准差
-    # NumPy 广播: (N,16,512,3) - (1,1,1,3) → 每个通道减自己的均值
+    # NumPy 广播: (N,16,512,4) - (1,1,1,4) → 每个通道减自己的均值
     normalized = (samples - mean) / std
 
     # 保存归一化参数，推理时需要用同样的 mean/std
@@ -146,7 +147,7 @@ def make_tf_dataset(
     - 梯度更稳定 (多个样本的梯度取平均)
 
     Args:
-        samples: shape=(N, 16, 512, 3) — 标准化后的样本
+        samples: shape=(N, 16, 512, 4) — 标准化后的样本
         labels: shape=(N,) — 标签 (None 则生成虚拟标签)
         batch_size: 每批多少个样本 (默认16)
         shuffle: 是否打乱顺序 (训练时打乱，验证时不打乱)
@@ -214,7 +215,7 @@ def _augment(sample: tf.Tensor, label: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]
        原因: 增强模型对部分频率缺失的鲁棒性
 
     Args:
-        sample: shape=(16, 512, 3) — 单个样本
+        sample: shape=(16, 512, 4) — 单个样本
         label: 标量 — 类别标签
 
     Returns:
@@ -254,10 +255,10 @@ def _augment(sample: tf.Tensor, label: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]
     # 随机决定遮蔽起始位置
     mask_start = tf.random.uniform([], 0, SP_FREQ_BINS - 4, dtype=tf.int32)
 
-    # 创建全 1 的遮蔽矩阵 (16帧 × 512频率 × 3通道)
-    mask = tf.ones((CNN_SAMPLE_FRAMES, SP_FREQ_BINS, 3))
+    # 创建全 1 的遮蔽矩阵 (16帧 × 512频率 × 4通道)
+    mask = tf.ones((CNN_SAMPLE_FRAMES, SP_FREQ_BINS, NUM_CHANNELS))
     # 创建遮蔽区域 (全 0)
-    mask_update = tf.zeros((CNN_SAMPLE_FRAMES, mask_len, 3))
+    mask_update = tf.zeros((CNN_SAMPLE_FRAMES, mask_len, NUM_CHANNELS))
 
     # 计算遮蔽区域的索引
     # meshgrid 生成二维索引网格: (帧号, 频率号) 的所有组合
@@ -268,7 +269,7 @@ def _augment(sample: tf.Tensor, label: tf.Tensor) -> tuple[tf.Tensor, tf.Tensor]
 
     # 把遮蔽区域设为 0
     mask = tf.tensor_scatter_nd_update(
-        mask, idx, tf.reshape(mask_update, [-1, 3])
+        mask, idx, tf.reshape(mask_update, [-1, NUM_CHANNELS])
     )
 
     # 应用遮蔽: 原始数据 × 遮蔽矩阵 (遮蔽区域变成 0)
@@ -298,7 +299,7 @@ def train_val_split(
     分层抽样保证每个类别都按比例分到训练集和验证集。
 
     Args:
-        samples: shape=(N, 16, 512, 3) — 全部样本
+        samples: shape=(N, 16, 512, 4) — 全部样本
         labels: shape=(N,) — 标签 (None 则随机划分)
         val_ratio: 验证集比例 (默认 0.2 = 20%)
 

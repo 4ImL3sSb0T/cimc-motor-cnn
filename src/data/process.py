@@ -16,7 +16,7 @@ from pathlib import Path
 
 from src.config import DC_OFFSET_SAMPLES, DATA_DIR, OUTPUT_DIR
 from src.data.data_loader import load_data, find_data_file, remove_dc_offset
-from src.data.fft_processor import process_3axis
+from src.data.fft_processor import process_4axis, compute_magnitude
 from src.data.sample_generator import generate_samples, generate_labels, filter_labeled, save_samples
 from src.visualizer import plot_fft_analysis, CNNSampleViewer
 
@@ -63,14 +63,15 @@ def run_pipeline(data_path: str | None = None, label_config: dict | None = None)
     # 2. 去直流偏移 (前 10000 行静态数据)
     ax, ay, az = remove_dc_offset(ax_raw, ay_raw, az_raw, static_n=DC_OFFSET_SAMPLES)
 
-    # 3. FFT 处理
-    result = process_3axis(ax, ay, az)
+    # 3. FFT 处理 (4 通道: X/Y/Z + magnitude)
+    result = process_4axis(ax, ay, az)
 
     # 4. 生成 CNN 样本
     spectrograms = {
         "x": result["x"][1],
         "y": result["y"][1],
         "z": result["z"][1],
+        "magnitude": result["magnitude"][1],
     }
     samples = generate_samples(spectrograms)
 
@@ -99,7 +100,7 @@ def run_viewer(data_path: str | None = None):
     print(f"总采样数: {len(ax_raw)}")
 
     ax, ay, az = remove_dc_offset(ax_raw, ay_raw, az_raw, static_n=DC_OFFSET_SAMPLES)
-    result = process_3axis(ax, ay, az)
+    result = process_4axis(ax, ay, az)
 
     viewer = CNNSampleViewer()
     viewer.load_data(result)
@@ -122,10 +123,11 @@ def run_static(data_path: str | None = None):
     print(f"总采样数: {len(ax_raw)}")
 
     ax, ay, az = remove_dc_offset(ax_raw, ay_raw, az_raw, static_n=DC_OFFSET_SAMPLES)
-    result = process_3axis(ax, ay, az)
+    result = process_4axis(ax, ay, az)
 
     OUTPUT_DIR.mkdir(exist_ok=True)
-    raw_signals = {"x": ax, "y": ay, "z": az}
+    am = compute_magnitude(ax, ay, az)
+    raw_signals = {"x": ax, "y": ay, "z": az, "magnitude": am}
     plot_fft_analysis(
         result, raw_signals=raw_signals,
         save_path=OUTPUT_DIR / f"{data_path.stem}_fft_analysis.png",
