@@ -188,8 +188,8 @@ def export_onnx_int8(
         per_channel=True,           # 逐通道量化 (精度更高)
         weight_type=QuantType.QInt8,  # 权重用 INT8
         activation_type=QuantType.QInt8,  # 激活值用 INT8
-        quant_format=QuantFormat.QDQ,  # QDQ 格式 (兼容性更好)
-        op_types_to_quantize=["Conv", "MatMul", "Add", "Relu"],  # 量化这些算子
+        quant_format=QuantFormat.QOperator,  # QOperator 格式 (更简洁, 兼容性更好)
+        op_types_to_quantize=["Conv", "MatMul"],  # 只量化 Conv 和 MatMul
     )
 
     # 清理中间文件
