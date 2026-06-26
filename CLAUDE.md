@@ -82,7 +82,9 @@ python -m src.cnn.predict --data data/imu_new.csv
 python -m src.cnn.predict --data data/imu_new.csv --output result.csv
 
 # 导出 ONNX 模型 (TFLite 因 TF 2.16 bug 无法使用)
-python -m src.cnn.export
+python -m src.cnn.export                      # FP32 ONNX (146KB)
+python -m src.cnn.export --int8               # INT8 量化 ONNX (~94KB, 需要校准数据)
+python -m src.cnn.export --int8 --calib 500   # 用 500 个样本校准 (更精确)
 
 # ESP32 数据采集
 python tcp_receiver.py                          # 默认 192.168.4.1:8080
