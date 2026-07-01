@@ -12,7 +12,9 @@
       "Bash(/c/Users/yuang/.claude/plugins/cache/claude-plugins-official/superpowers/5.1.0/skills/brainstorming/scripts/start-server.sh *)",
       "Bash(conda activate *)",
       "Bash(python verify_model.py)",
-      "Bash(conda info *)"
+      "Bash(conda info *)",
+      "Bash(git config *)",
+      "Bash(ssh -V)"
     ]
   }
 }
